@@ -45,7 +45,8 @@
 #define MENU_AUDIO_OUT_FX	26
 #define MENU_STEP_CHORD		27
 #define MENU_STEP_DIR		28
-#define MENU_SWING_MODE		29
+//29, 30: MENU_MODAL_EXCITER, MENU_MODAL_PARTIALS in menu.h (also used by Preset/KitEngines.c)
+#define MENU_SWING_MODE		31	//(29 and 30: the Modal lists)
 
 //-----------------------------------------------------------------
 // Shared texts. Reduce mem usage by pooling common text
@@ -112,6 +113,22 @@ const char swingModeNames[][4] =
 	{2},		//number of entries
 	{"Not"},
 	{"Clk"},
+};
+//Modal engine (OpenElixir-02): exciter (enum ModalExciter) and number of partials
+const char modalExciterNames[][4] =
+{
+	{3},		//number of entries
+	{"mlt"},
+	{"nse"},
+	{"bow"},
+};
+const char modalPartialNames[][4] =
+{
+	{4},		//number of entries
+	{"8"},
+	{"12"},
+	{"16"},
+	{"24"},
 };
 //-----------------------------------------------------------------
 const char stepShiftNames[][4] =
@@ -528,6 +545,13 @@ const char shortNames[][4]  =
 	{"chd"},
 	{"dir"},
 	{"swg"},
+	{"exc"},
+	{"dmp"},
+	{"str"},
+	{"brt"},
+	{"pos"},
+	{"hrd"},
+	{"prt"},
 
 };
 //-----------------------------------------------------------------
@@ -566,6 +590,7 @@ const char catNames[][16] =
 	{"Fx"},
 	{"DJ Filt."},
 	{"Perf"},
+	{"Modal"},
 };
 //-----------------------------------------------------------------
 // these must correspond to longNamesEnum
@@ -668,6 +693,13 @@ const char longNames[][16] =
 	{"DJ Cut"},
 	{"DJ Reso"},
 	{"Swing Md"},
+	{"Exciter"},
+	{"Damping"},
+	{"Struct."},
+	{"Bright."},
+	{"Position"},
+	{"Hardness"},
+	{"Partials"},
 };
 
 
