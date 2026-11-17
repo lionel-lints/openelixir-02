@@ -304,10 +304,9 @@ uint8_t seq_getTrackLength(uint8_t trackNr)
 #else
 	uint8_t r=seq_patternSet.length[frontParser_shownPattern][trackNr];
 #endif
-	/*
+	//0 is the old way of storing 16 (stock Euclid patterns): the sequencer plays it as 16
 	if(r==0)
 		return 16;
-	*/
 	return r;
 }
 //------------------------------------------------------------------------------
@@ -2515,8 +2514,9 @@ void seq_addNote(uint8_t trackNr,uint8_t vel, uint8_t note)
 		}
 		*/
 
-		//limit to track length
-		quantizedStep = quantizedStep%seq_patternSet.length[targetPattern][trackNr];
+		//limit to track length (0 = 16, see seq_getTrackLength)
+		const uint8_t trackLength = seq_patternSet.length[targetPattern][trackNr];
+		quantizedStep = quantizedStep%(trackLength ? trackLength : 16);
 		if(step != quantizedStep)
 		{
 			step = quantizedStep;

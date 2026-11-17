@@ -230,10 +230,8 @@ void euklid_transferPattern(uint8_t trackNr, uint8_t patternNr)
 #endif
 
 	}
-// **PATROT - pattern end is now stored differently
-
-	if(len == 16)
-		len=0;
+	//the real length: 16 used to be stored as 0, which the sequencer plays as 16
+	//but the length pages and the encoder then showed and counted from 0
 #if USE_PATTERN_EDIT_BUFFER
 	patternBackupBuffer.length[trackNr]=len;
 #else
