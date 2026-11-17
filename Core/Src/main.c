@@ -45,6 +45,7 @@ typedef struct ImageFileHeaderStruct
 #include "IO/adcPots.h"
 #include "Preset/PresetManager.h"
 #include "Soundengine/Soundengine.h"
+#include "Soundengine/Sequencer/sequencer.h"
 #include "Soundengine/DSPAudio/random.h"
 #include "Soundengine/USB/usb_manager.h"
 #include "Soundengine/MIDI/Uart.h"
@@ -165,6 +166,10 @@ void sd_formatRoutine()
 
 		//create glo.cfg file
 		preset_createGlobals();
+
+		//empty patterns (length 16) and an empty song for the project: the sequencer
+		//is only initialised later, by soundengine_init()
+		seq_init();
 
 		//load init sound
 		preset_init(0);
