@@ -22,6 +22,11 @@ slot's 7 engine specific parameters must change the sound of the engine it runs 
 the roles that engine doesn't have). The voice level checks render a copy of the voice,
 so they don't depend on the mixer, FX or the other voices.
 
+`render --parser` checks how the sequencer side handles the UI's messages: their 7-bit values
+are used as array indices, so out-of-range values must be ignored. A request for the Euclid
+settings of a track must answer with that track's settings for tracks 1-7 and read nothing for
+any other value (selecting a pattern used to send the menu page number).
+
 How it works:
 - The engine is driven only through entry points that stay stable across refactorings:
   `soundengine_init()`, `frontParser_parseUartData()` (the UI's byte stream: parameters,

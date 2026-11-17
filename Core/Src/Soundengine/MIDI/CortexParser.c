@@ -884,6 +884,7 @@ static void frontParser_handleSeqCC()
 		break;
 
 	case FRONT_SEQ_REQUEST_EUKLID_PARAMS:
+		if(cortex_midiMsg.data2 >= NUM_TRACKS) break;	//7-bit data used as index: ignore out of range
 
 //	case SEQ_EUKLID_LENGTH:
 		activeParameters[PAR_EUKLID_LENGTH] = euklid_getLength(cortex_midiMsg.data2);//frontParser_midiMsg.data2;

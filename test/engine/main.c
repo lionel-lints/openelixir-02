@@ -22,6 +22,7 @@
 #include "Soundengine/MIDI/MidiVoiceControl.h"
 #include "Soundengine/MIDI/CortexParser.h"
 #include "Soundengine/MIDI/MidiMessages.h"
+#include "Soundengine/Sequencer/sequencer.h"
 #include "Parameters.h"
 #include "menu/menu.h"
 #include "Preset/InitKit.h"
@@ -534,6 +535,47 @@ static int engineTest(void)
 }
 #endif
 
+//------------------------------------------------------------ UI message checks
+//The UI's messages carry 7-bit values that the sequencer uses as array indices.
+//A request for the Euclid settings of a track must read the settings of tracks
+//1-7 only: selecting a pattern sent the menu page number (18 and more) instead
+//of the track, which read past the 7-entry Euclid arrays.
+extern int harness_euklidMaxTrack;	//stubs.c: highest track the Euclid getters were asked for
+static int euklidRequestTest(void)
+{
+	int fail = 0;
+	for(uint8_t track = 0; track < NUM_TRACKS; track++)
+	{
+		harness_euklidMaxTrack = -1;
+		sendFront(FRONT_SEQ_CC, FRONT_SEQ_REQUEST_EUKLID_PARAMS, track);
+		const int bad = activeParameters[PAR_EUKLID_LENGTH] != 10 + track
+			|| activeParameters[PAR_EUKLID_STEPS] != 20 + track
+			|| activeParameters[PAR_EUKLID_ROTATION] != 30 + track;
+		if(bad) printf("euklid request track %d: wrong settings arrived\n", track);
+		fail |= bad;
+	}
+	//out of range: the last valid answer must stay, and nothing may be read
+	const uint8_t invalid[] = { NUM_TRACKS, PATTERN_LOAD_PAGE, 127 };
+	for(unsigned i = 0; i < sizeof(invalid); i++)
+	{
+		harness_euklidMaxTrack = -1;
+		sendFront(FRONT_SEQ_CC, FRONT_SEQ_REQUEST_EUKLID_PARAMS, invalid[i]);
+		const int bad = harness_euklidMaxTrack >= NUM_TRACKS
+			|| activeParameters[PAR_EUKLID_LENGTH] != 10 + NUM_TRACKS - 1;
+		if(bad) printf("euklid request track %d: read past the %d tracks\n", invalid[i], NUM_TRACKS);
+		fail |= bad;
+	}
+	printf("euklid request: %s\n", fail ? "FAILED" : "ok");
+	return fail;
+}
+
+static int parserTest(void)
+{
+	const int fail = euklidRequestTest();
+	printf(fail ? "PARSER TEST FAILED\n" : "parser test passed\n");
+	return fail;
+}
+
 //1 = limiter, 0 = stock mix (OpenElixir-02 config "lim"); weak: older trees don't have it
 extern uint8_t mixer_limiterOn __attribute__((weak));
 
@@ -558,9 +600,15 @@ int main(int argc, char** argv)
 		return engineTest();
 	}
 #endif
+	if(argc == 2 && strcmp(argv[1], "--parser") == 0)
+	{
+		mapPeripherals();
+		soundengine_init();
+		return parserTest();
+	}
 	if(argc != 2)
 	{
-		fprintf(stderr, "usage: %s [--no-limiter] <output file> | --engines\n", argv[0]);
+		fprintf(stderr, "usage: %s [--no-limiter] <output file> | --engines | --parser\n", argv[0]);
 		return 2;
 	}
 	mapPeripherals();

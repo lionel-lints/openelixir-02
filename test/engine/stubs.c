@@ -20,9 +20,17 @@ HAL_StatusTypeDef HAL_TIM_Base_Start_IT(TIM_HandleTypeDef *htim) { return HAL_OK
 HAL_StatusTypeDef HAL_TIM_Base_Stop_IT(TIM_HandleTypeDef *htim) { return HAL_OK; }
 void preset_touchTimer(PresetTimer type) { }
 void menu_updateVoicePages(void) { }
-uint8_t euklid_getLength(uint8_t trackNr) { return 0; }
-uint8_t euklid_getRotation(uint8_t trackNr) { return 0; }
-uint8_t euklid_getSteps(uint8_t trackNr) { return 0; }
+//the getters record the highest track asked for (--parser checks it) and return
+//a value per track, so the test can tell which track's settings arrived
+int harness_euklidMaxTrack = -1;
+static uint8_t euklidGet(uint8_t trackNr, uint8_t base)
+{
+	if(trackNr > harness_euklidMaxTrack) harness_euklidMaxTrack = trackNr;
+	return (uint8_t)(base + trackNr);
+}
+uint8_t euklid_getLength(uint8_t trackNr) { return euklidGet(trackNr, 10); }
+uint8_t euklid_getRotation(uint8_t trackNr) { return euklidGet(trackNr, 30); }
+uint8_t euklid_getSteps(uint8_t trackNr) { return euklidGet(trackNr, 20); }
 void euklid_init(void) { }
 void euklid_setLength(uint8_t trackNr, uint8_t value) { }
 void euklid_setRotation(uint8_t trackNr, uint8_t value, uint8_t patternNr) { }

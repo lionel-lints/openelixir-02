@@ -789,8 +789,8 @@ void buttonHandler_patternSlot(uint8_t pattern)
 		//select pattern to show // shownPattern
 		menu_setShownPattern(pattern);
 
-		frontPanel_sendData(SEQ_CC, SEQ_REQUEST_EUKLID_PARAMS,
-				menu_activePage/*menu_getActiveVoice()*/);
+		//the Euclid settings of the active track (this sent the menu page number)
+		frontPanel_sendData(SEQ_CC, SEQ_REQUEST_EUKLID_PARAMS, menu_getActiveVoice());
 		//update autosave pattern on manual pattern change
 		preset_touchTimer(PRESET_PAT_TIMER);
 
