@@ -1383,6 +1383,16 @@ static uint8_t interpolate(uint8_t a, uint8_t b, uint8_t x)
 }
 
 //----------------------------------------------------
+//These slots hold MIDI transport state (NRPN select/data entry, bank change), not
+//sound parameters. Sending them as CCs from a kit sweep runs an NRPN with whatever
+//number was selected last, or a bank change (erica-synths/lxr-desktop-app#11).
+static inline uint8_t preset_isTransportParameter(uint8_t paramNr)
+{
+	return paramNr == PAR_NRPN_DATA_ENTRY_COARSE ||
+		paramNr == PAR_NRPN_FINE || paramNr == PAR_NRPN_COARSE ||
+		paramNr == PAR_BANK_CHANGE;
+}
+//----------------------------------------------------
 //kit load: not time critical, runs from flash (frees ITCM)
 void preset_sendDrumsetParametersImmediate()
 {
@@ -1432,6 +1442,11 @@ void preset_sendDrumsetParametersImmediate()
 		{
 
 			uint8_t paramNumber = parameterOrder[i];
+			if(preset_isTransportParameter(paramNumber))
+			{
+				soundengine_process();
+				continue;
+			}
 
 			//const uint8_t morph = activeParameters[PAR_MORPH];
 
@@ -2256,6 +2271,14 @@ void preset_morph_tick()
 	//return;
 	if(morph_state)
 	{
+		//transport slot: use up its tick without sending it
+		if(preset_isTransportParameter(morph_index))
+		{
+			morph_index++;
+			if(morph_index >= END_OF_SOUND_PARAMETERS)
+				morph_state = 0;
+			return;
+		}
 
 		uint8_t morph;
 
