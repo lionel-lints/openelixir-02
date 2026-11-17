@@ -44,6 +44,12 @@ static void modNode_setOriginalValueChanged(ModulationNode* vm, uint16_t idx)
 	if(vm->destination == idx) { //parameter is active in this modulator
 		const Parameter *p=&parameterArray[idx];
 
+		//as in modNode_setDestination: not every parameter has a value to read
+		if(!p->ptr)
+		{
+			return;
+		}
+
 			//update orig value
 			switch(p->type)
 			{
