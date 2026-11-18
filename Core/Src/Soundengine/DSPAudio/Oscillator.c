@@ -27,6 +27,11 @@ static __inline uint32_t freq2PhaseIncr(const float f) //4096
 //-----------------------------------------------------------
 static __inline uint8_t fast_log2 (const uint32_t val)
 {
+	//0 (every frequency below 440 Hz): __CLZ(0) is undefined for the compiler; the hardware
+	//gives 32, so this returned 255 and freqToTableIndex() 4 (12*255+70 = 3130, /12 = 260 -> 4).
+	//Kept explicitly: it is the stock sound (all oscillators below 440 Hz use table 4).
+	if(val == 0)
+		return 255;
 	return 31-__CLZ(val);
 }
 //-----------------------------------------------------------

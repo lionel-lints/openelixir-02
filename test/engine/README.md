@@ -27,6 +27,12 @@ are used as array indices, so out-of-range values must be ignored. A request for
 settings of a track must answer with that track's settings for tracks 1-7 and read nothing for
 any other value (selecting a pattern used to send the menu page number).
 
+Comparing with a tree from before 2.0 (e.g. `compare.sh v1.4`): those trees call `__CLZ(0)` in
+`Oscillator.c` for every oscillator below 440 Hz. That is undefined; the hardware gives table 4,
+the host (x86) gave table 5, so their host renders differ from 2.0 there while the hardware sound
+doesn't. Add `if(val == 0) return 255;` to `fast_log2()` in the old tree: then the renders are
+bit-identical.
+
 How it works:
 - The engine is driven only through entry points that stay stable across refactorings:
   `soundengine_init()`, `frontParser_parseUartData()` (the UI's byte stream: parameters,
