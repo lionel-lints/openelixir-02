@@ -42,7 +42,9 @@ Swing
    `Not` = straight (default), `Clk` = swung like the notes. Notes, rolls and recording are the same
    in both modes (one timing path, decided after the review: two paths would double every feature
    and make switching mid-play fragile). Older settings files (stock, 1.4.x)
-   get `Not` too (decided after the review: the straight clock is the point of this release). Because the clock outputs change by default, this is a breaking change: version 2.0.0. The
+   get `Not` too (decided after the review: the straight clock is the point of this release). The
+   stock firmware reads exactly its own number of settings bytes and ignores the rest (checked in
+   its `preset_readGlobalData()`), so the appended byte is safe for it. Because the clock outputs change by default, this is a breaking change: version 2.0.0. The
    stock firmware reads only its own part of `glo.cfg`, as with `lim`.
 3. No per-track swing in this round, but all swing goes through one function,
    `swingOffsetTicks(track, step)`, so per-track swing later only changes that function, the
@@ -61,8 +63,11 @@ Swing
    without swing (in stock it is squeezed: an intended change). Swing belongs to the step a note
    comes from, not where it lands.
 7. Overlaps, per track (tracks 6 and 7, closed and open hat, are separate tracks here; their choke
-   stays in the sound engine): the first hit of a newer step cancels the pending hits of older
-   steps. All hits of one step fire, also if two land in the same block. The shared choke flags of
+   stays in the sound engine): when a newer step's first hit fires, the pending flam/arp repeats
+   of older steps are cancelled; an older step's first hit (its note, wherever micro-shift puts it)
+   always plays, also after the newer step's first hit (decided after the second review: otherwise
+   late micro-shifted notes would vanish; stock plays them). All hits of one step fire, also if two
+   land in the same block. The shared choke flags of
    `seq_processFlam()` (review S-B4) go away.
 8. Live recording snaps to the nearest step on the swung grid: the threshold is the midpoint between
    the current step's swung start and the next step's swung start.
@@ -76,7 +81,9 @@ Rolls
    (selected at power-on in `menu.c`, with the sequencer's matching value) stays "16". Nothing stores
    or transmits the roll speed as a number.
 10. One to 16 (every hit on a 16th) swing like notes; 8T, 16T, 32, 32T and 64 ignore swing
-    completely: they stay on the straight grid, evenly spaced in time.
+    completely: they stay on the straight grid, evenly spaced in time. One switch in the code, so the
+    hardware listening test (swing 64, 32 and 64 rolls) can change it to "start with the step's
+    swing, even inside" without rework.
 11. Rolls are locked to the global grid (decided after the review): a roll hit is due when the
     master tick count is a multiple of the interval, counted from the start of the sequencer, not
     from the track's position. The count wraps every 256 steps = 6144 ticks, and every interval
@@ -99,24 +106,29 @@ prev/current/next patterns and choke flags) and the clock stretch.
 - Clock outputs: the MIDI clock (every 4th tick) and the clock jack ticks are sent at their tick in
   `Not` mode. In `Clk` mode the pulses of a swung step are scheduled at grid time + swing delay +
   k x (step - swing delay) / 24 for its tick k (decision 4b), through the same fire loop.
+- Units: system ticks (0.25 ms) everywhere in the scheduler, as a 32-bit integer plus an 8-bit
+  fraction (a float would lose the 0.25 ms resolution after about 70 minutes of running); the
+  conversions from tempo (ms per 96 ppq tick) are in one function.
 - Grid time: the exact system time of a step's tick 0 is `systick at the tick - rest` (the leftover
   time `seq_tick()` already computes), not the block it was handled in.
-- Queue: per track a small array of pending hits sorted by time, each `{fireTime (system ticks,
-  float), step id (master step count of the source step), vol, note}`. Capacity 16 per track (a
-  step has at most 8 flam/arp hits; the cut rule keeps at most 2 steps pending). Full: the oldest
-  step's hits are dropped first.
+- Queue: per track a small array of pending hits sorted by time, each `{fireTime, step id (master
+  step count of the source step), first-hit flag, vol, note}`. Capacity 16 per track (a step has at
+  most 8 flam/arp hits). Full: the oldest step's repeats are dropped first; drops are counted, and
+  the tests require 0.
 - Enqueue: at tick 0 of step n, the hits of step n+1 of every track are enqueued (one step of look
   ahead, because a negative micro-shift of up to 21 ticks plays before the step's own tick 0). Each
   hit's time = grid time of step n+1 + swing delay (if step n+1 is a 2nd or 4th 16th) + micro-shift
-  x 3 ticks + its flam/arp offset. Track wrap and pattern changes: step n+1 is read from the
-  pattern and position that will be active then. Probability is decided at enqueue (the dice of the
-  step, as now).
+  x 3 ticks + its flam/arp offset. Step n+1 is each track's own next position (its own length and
+  wrap) in the pattern that will be active then (a pending pattern change at the end of the
+  pattern). Probability is decided at enqueue, with that step's dice (rolled one step earlier than
+  now). At start and after a reset the first step is enqueued before it plays (priming).
 - Fire: every `seq_tick()` (once per block) pops all hits with `fireTime <= now`, in time order, and
-  triggers them (`seq_triggerVoice()`, which also sends the MIDI note). Firing a hit of step s
-  cancels that track's pending hits of steps before s.
+  triggers them (`seq_triggerVoice()`, which also sends the MIDI note). Firing the first hit of
+  step s cancels that track's pending repeats (not first hits) of steps before s.
 - Rolls: due roll hits (decision 11) are enqueued at their grid time, the 16th-and-slower ones plus
   the swing delay of their step. A held roll button is checked at every tick.
-- Stop, pattern reload, position reset: all queues are cleared.
+- Stop, pattern reload, position reset: all queues are cleared, and the recording reference (the
+  time the current step started) is reset.
 - Cost: per block, 7 track queues are checked at their first entry; nothing else unless a hit is due.
 
 ## Testing
@@ -134,7 +146,9 @@ firmware's time model, golden timelines from 1.4.1.
   every difference is listed and explained in the commit).
 - Rolls: every speed on its global grid, 16th-and-slower swung, faster straight, odd track lengths.
 - Recording: hits 3 ms early and late, and at the midpoint +-2 ms, on straight and swung steps; at a
-  track wrap, a pattern change and with micro-shifted steps.
+  track wrap, a pattern change, with micro-shifted steps and right after start.
+- Overlaps: a late micro-shifted note after the next step's first hit still plays; flam repeats of
+  an older step stop at the newer step's first hit; no queue overflow.
 - External clock: jittered MIDI clock, a tempo ramp, stop and start in the middle of a bar, analog
   clock.
 
@@ -146,7 +160,8 @@ Commits on `lionel/note-swing` (done: plan, image safety check, harness, recordi
    on the swung grid, clock outputs per `swg`, the `swg` setting; tests for both modes.
 2. Rolls: sorted speeds, global grid, swing rule, start-up default; roll tests.
 3. Docs: README (features), KNOWN_ISSUES.md (S-B6 now fixed in `Not` mode), config menu and roll
-   table, a changelog entry for 2.0.0.
+   table, a changelog entry for 2.0.0 that says first: the clock outputs are now straight by
+   default, `swg` = `Clk` swings them again.
 4. Hardware check, merge into `lionel/v1.4-fixes`, version 2.0.0.
 
 ## Safety: the bootloader
@@ -163,5 +178,7 @@ caught.
 - A swung pattern with flams: the flam spacing is intact.
 - Every roll speed, also on an odd-length track; recording a swung part.
 - Odd track lengths and a pattern change with swing; `swg` saved and loaded with the settings.
-- `swg` = `Clk`: notes feel as before, gear synced to the LXR swings along.
+- `swg` = `Clk`: notes feel as before, gear synced to the LXR swings along (evenly).
+- Swing 64 with 32 and 64 rolls: do straight fast rolls sit right against the swung notes?
+- An SD card with stock settings: `swg` defaults to `Not`, the stock firmware still loads it.
 - CPU meter build: the load with dense flams and 64th rolls at a high tempo.
