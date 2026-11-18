@@ -52,9 +52,10 @@ void euklid_init()
  */
 static inline uint8_t getObjSize(uint16_t group)
 {
-	uint8_t ret = 32 - __CLZ((uint32_t)group);
-	if(ret==0) return 1;
-	return ret;
+	//test for 0 before __CLZ: __builtin_clz(0) is undefined, and GCC 15 dropped the old
+	//"ret == 0" check after it. Group size 0 ended the generator at once: steps hits in a row.
+	if(group == 0) return 1;
+	return (uint8_t)(32 - __CLZ((uint32_t)group));
 }
 //-----------------------------------------------------
 void euklid_calcRecursive(uint8_t length, uint8_t steps, uint8_t iteration, uint16_t group1, uint16_t group2)
