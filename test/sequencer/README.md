@@ -21,7 +21,7 @@ them, like received MIDI. Each scenario runs in its own process, so no state is 
 
 Scenarios (`main.c`): straight 16ths; swing 0-127 at 150 bpm (and 64 at 93 bpm) with flams and
 micro-shifts on straight and swung steps; a 15-step track; a pattern change; every roll speed (and
-1/8 and 16 with swing); MIDI clock and analog clock in; recording, 3 ms early and 3 ms late.
+1/8 and 16 with swing); MIDI clock and analog clock in; recording, 3 ms early and 3 ms late (internal clock and MIDI clock).
 
 `golden/` was captured from 1.4.1 (the stock sequencer timing) before the note swing work: a change
 that keeps the timing must reproduce it exactly. Checked to fail on small changes (swing x15/16
@@ -33,5 +33,9 @@ What the 1.4.1 timelines show (stock behaviour):
   (16.7 ms without swing) and the flams of swung steps are squeezed.
 - Following an external clock with swing drops notes: 52 instead of 61 hat hits (MIDI and analog
   clock, swing 64), the next external step cuts off the last ticks of a swung step.
-- Recording: a hit played 3 ms early lands one step too early (any swing); 3 ms late is right. The
-  step position counter wraps to 0 % after the last tick of a step, before the next step starts.
+- Recording: a hit played 3 ms early landed one step too early (any swing); 3 ms late was right.
+  The step position counter wrapped to 0 % after the last tick of a step, before the next step
+  started. Fixed in both swing modes (recording now measures from the time the step started, on the
+  swung grid); the three `record_*_early` timelines were updated for it, on purpose.
+
+`run.sh` also checks every recording scenario directly: the recorded steps must be the played steps.

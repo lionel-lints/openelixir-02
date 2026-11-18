@@ -19,6 +19,12 @@ capture=0; [ "${1:-}" = "--capture" ] && capture=1
 fail=0
 for sc in $("$OUT/seqtime" --list); do
 	"$OUT/seqtime" "$sc" "$OUT/timelines/$sc.txt"
+	#recording: every played hit must be recorded on the step it was played for
+	if [[ $sc == record_* ]]; then
+		hits=$(awk '$3=="HIT"{print $4}' "$OUT/timelines/$sc.txt" | sort -n | tr '\n' ' ')
+		recs=$(awk '$3=="REC"{print $4}' "$OUT/timelines/$sc.txt" | sort -n | tr '\n' ' ')
+		if [ "$hits" != "$recs" ]; then echo "WRONG STEPS: $sc played $hits recorded $recs"; fail=1; fi
+	fi
 	if [ $capture = 1 ]; then
 		cp "$OUT/timelines/$sc.txt" "$HERE/golden/$sc.txt"
 	elif ! cmp -s "$OUT/timelines/$sc.txt" "$HERE/golden/$sc.txt"; then

@@ -48,6 +48,7 @@ void seq_setPendingPatternActive();
 uint8_t seq_prescaleCounter = 0;
 
 uint8_t seq_masterStepCnt=0;				/** keeps track of the played steps between 0 and 127 independent from the track counters*/
+static uint32_t seq_stepStartTime = 0;		/**< system time the current step started (a swung step: after its swing delay)*/
 uint8_t seq_rollRate = 1;				//start with roll rate = 1/16
 uint8_t seq_rollState = 0;					/**< each bit represents a voice. if bit is set, roll is active*/
 
@@ -1351,6 +1352,7 @@ IN_ITCM_RAM void seq_nextStep()
 		return;
 
 	seq_masterStepCnt++;
+	seq_stepStartTime = systick_ticks;
 
 	//---- calc master step position. max value is 64. also take in regard the pattern length -----
 	// track 0 determines the master step position
@@ -2477,6 +2479,23 @@ PatternSet* get_seq_patternSet_p(void)
 }
 
 //------------------------------------------------------------------------
+//live recording: is a hit now nearer to the next step than to the current one?
+//The steps start on the swung grid: a swung 16th (even seq_masterStepCnt) starts by the
+//swing delay late, so the gap after a straight step is longer by it and the gap after a
+//swung step shorter. Measured from the time the current step started, so it also works
+//with an external clock. (The stock seq_getElapsedStepTimePercent() read the tick
+//counter, which wraps to 0 % in the last tick of a step, before the next step starts:
+//hits played slightly early were recorded one step too early.)
+static uint8_t seq_isHitNearerNextStep(void)
+{
+	if(seq_tempo == 0) return 0;
+	const float tick = (1000*60.f)/seq_tempo/96.f*4.f;	//system ticks (0.25 ms) per 96 ppq tick
+	const float swing = seq_shuffle*16.f*tick;
+	const uint8_t currentIsSwung = (seq_masterStepCnt%2) == 0;
+	const float gap = 24.f*tick + (currentIsSwung ? -swing : swing);
+	return (float)(systick_ticks - seq_stepStartTime) >= gap/2.f;
+}
+//------------------------------------------------------------------------
 void seq_addNote(uint8_t trackNr,uint8_t vel, uint8_t note)
 {
 	uint8_t targetPattern;
@@ -2487,7 +2506,7 @@ void seq_addNote(uint8_t trackNr,uint8_t vel, uint8_t note)
 		//const int8_t quantizedStep = seq_quantize(seq_stepIndex[trackNr]);
 
 		uint8_t step = seq_stepIndex[trackNr];
-		int8_t quantizedStep = (seq_getElapsedStepTimePercent() >= 50.f) ? seq_stepIndex[trackNr] + 1 : seq_stepIndex[trackNr];
+		int8_t quantizedStep = seq_isHitNearerNextStep() ? seq_stepIndex[trackNr] + 1 : seq_stepIndex[trackNr];
 
 
 

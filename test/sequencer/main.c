@@ -164,6 +164,8 @@ static Scenario scenarios[] =
 	S("record_swing064_late",  120,  64, CLOCK_INTERNAL, 20, NULL,             eventRecord),
 	S("record_swing096_early", 120,  96, CLOCK_INTERNAL, 20, NULL,             eventRecord),
 	S("record_swing096_late",  120,  96, CLOCK_INTERNAL, 20, NULL,             eventRecord),
+	S("record_midiclock_swing064_early", 120, 64, CLOCK_MIDI, 20, NULL,       eventRecord),
+	S("record_midiclock_swing064_late",  120, 64, CLOCK_MIDI, 20, NULL,       eventRecord),
 };
 #define NUM_SCENARIOS (int)(sizeof(scenarios) / sizeof(scenarios[0]))
 

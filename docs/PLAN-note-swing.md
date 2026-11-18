@@ -41,6 +41,9 @@ Swing
    hits of one track in the same audio block are one trigger. Cross-track behaviour (hi-hat choke)
    is the sound engine's and unchanged; the shared choke flags (review S-B4) go away.
 8. Live recording snaps to the swung grid in `Not` mode.
+8b. Found by the harness: stock recording put hits played slightly early (within the last tick of a
+    step) one step too early. Fixed in both modes (decided 2026-11-18): the nearest step is measured
+    from the time the current step started, on the swung grid.
 
 Rolls
 
