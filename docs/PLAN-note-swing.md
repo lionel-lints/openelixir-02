@@ -83,7 +83,8 @@ Rolls
 10. One to 16 (every hit on a 16th) swing like notes; 8T, 16T, 32, 32T and 64 ignore swing
     completely: they stay on the straight grid, evenly spaced in time. One switch in the code, so the
     hardware listening test (swing 64, 32 and 64 rolls) can change it to "start with the step's
-    swing, even inside" without rework.
+    swing, even inside" without rework. Listened on the hardware (2026-11-18, 1.99.3): straight
+    fast rolls sound right at swing 64, kept.
 11. Rolls are locked to the global grid (decided after the review): a roll hit is due when the
     master tick count is a multiple of the interval, counted from the start of the sequencer, not
     from the track's position. The count wraps every 256 steps = 6144 ticks, and every interval
