@@ -38,15 +38,22 @@ Swing
 1. Note positions are the stock swung positions: the 2nd and 4th 16th of each beat are delayed by
    shuffle/127 x 16 ticks.
 2. Global config option `swg` ("Swing mode") next to `lim`, appended to `glo.cfg` after the limiter
-   byte: `Not` = note swing (default), `Clk` = stock clock swing. Older settings files (stock, 1.4.x)
+   byte. It only decides how the clock outputs (MIDI clock and the clock jacks) are paced:
+   `Not` = straight (default), `Clk` = swung like the notes. Notes, rolls and recording are the same
+   in both modes (one timing path, decided after the review: two paths would double every feature
+   and make switching mid-play fragile). Older settings files (stock, 1.4.x)
    get `Not` too (decided after the review: the straight clock is the point of this release). Because the clock outputs change by default, this is a breaking change: version 2.0.0. The
    stock firmware reads only its own part of `glo.cfg`, as with `lim`.
 3. No per-track swing in this round, but all swing goes through one function,
    `swingOffsetTicks(track, step)`, so per-track swing later only changes that function, the
    storage (pattern block version 3) and the UI. No file format change now.
-4. Leading and following an external clock (MIDI and analog) use the same note swing; the
-   postponing timer stays for `Clk` mode only. In `Not` mode steps start on the external clock and
-   their hits are scheduled in time, so the next external step can't cut them off.
+4. Leading and following an external clock (MIDI and analog) use the same note swing. Steps start
+   on the straight clock (internal or external), the postponing timer goes, and hits are scheduled
+   in time, so the next external step can't cut them off.
+4b. `Clk` clock outputs: the clock pulses of a swung step start late by the swing delay and are
+   spread evenly over the rest of that step, so the next step's first pulse is on time. (Stock
+   delayed the first pulse and then fired the rest back to back.) Switching `swg` while playing only
+   changes the pulse times of the next step.
 5. Exact time: hits are scheduled in system time (0.25 ms) and sound in the first audio block at or
    after it, like the stock swing. The scheduled times of all 128 swing values are distinct; what
    sounds is quantised to blocks (one step of swing is 0.5-0.9 ms, a block 1.45 ms), as in stock.
@@ -56,7 +63,7 @@ Swing
 7. Overlaps, per track (tracks 6 and 7, closed and open hat, are separate tracks here; their choke
    stays in the sound engine): the first hit of a newer step cancels the pending hits of older
    steps. All hits of one step fire, also if two land in the same block. The shared choke flags of
-   `seq_processFlam()` (review S-B4) go away in `Not` mode.
+   `seq_processFlam()` (review S-B4) go away.
 8. Live recording snaps to the nearest step on the swung grid: the threshold is the midpoint between
    the current step's swung start and the next step's swung start.
 8b. Found by the harness: stock recording put hits played slightly early (within the last tick of a
@@ -83,14 +90,15 @@ Deferred, on purpose
   follows and is restarted mid-song, not for the clock it sends.
 - Sub-block clock timing (see Goal).
 
-## Scheduler spec (`Not` mode)
+## Scheduler spec (both modes)
 
-`Clk` mode keeps the stock code path unchanged (`seq_processFlam()` with its prev/current/next
-patterns and choke flags), so its timelines stay byte-identical by construction. `Not` mode uses
-the scheduler:
+One timing path: the scheduler replaces the stock note playback (`seq_processFlam()` with its
+prev/current/next patterns and choke flags) and the clock stretch.
 
-- Clock: the 96 ppq ticks run straight (no stretch), in both leading and following. MIDI clock and
-  clock outputs come from these ticks as before.
+- Clock: the 96 ppq ticks run straight (no stretch), in both leading and following.
+- Clock outputs: the MIDI clock (every 4th tick) and the clock jack ticks are sent at their tick in
+  `Not` mode. In `Clk` mode the pulses of a swung step are scheduled at grid time + swing delay +
+  k x (step - swing delay) / 24 for its tick k (decision 4b), through the same fire loop.
 - Grid time: the exact system time of a step's tick 0 is `systick at the tick - rest` (the leftover
   time `seq_tick()` already computes), not the block it was handled in.
 - Queue: per track a small array of pending hits sorted by time, each `{fireTime (system ticks,
@@ -116,11 +124,14 @@ the scheduler:
 Sequencer timing harness (`test/sequencer`, done): the real `sequencer.c`/`clockSync.c` with the
 firmware's time model, golden timelines from 1.4.1.
 
-- `Clk` mode: byte-identical to the golden timelines (except the deliberate recording fix, 8b).
-- `Not` mode: every note event within one block of its time in `Clk` mode; flam/arp spacing on swung
-  steps equal to the unswung spacing (within one block); MIDI clock and clock output intervals
-  within one block of the nominal interval at every swing, leading and following; no hits dropped
-  when following.
+- Notes, both modes: every note event within one block of its time in the 1.4.1 golden timeline,
+  except the intended changes (flam/arp spacing on swung steps equal to the unswung spacing, within
+  one block; no hits dropped when following). Note events identical in `Not` and `Clk` mode.
+- Clock outputs: `Not`: MIDI clock and clock jack intervals within one block of the nominal interval
+  at every swing, leading and following. `Clk`: the pulses of swung steps at their spread times
+  (4b), within one block; the first pulse of every step on time.
+- Scenarios without swing: every event within one block of the golden timeline (target: identical;
+  every difference is listed and explained in the commit).
 - Rolls: every speed on its global grid, 16th-and-slower swung, faster straight, odd track lengths.
 - Recording: hits 3 ms early and late, and at the midpoint +-2 ms, on straight and swung steps; at a
   track wrap, a pattern change and with micro-shifted steps.
@@ -131,8 +142,8 @@ firmware's time model, golden timelines from 1.4.1.
 
 Commits on `lionel/note-swing` (done: plan, image safety check, harness, recording fix):
 
-1. Scheduler and note swing behind `swg` (`Clk` path untouched): queue, enqueue/fire, cut rule,
-   following an external clock, recording on the swung grid, the `swg` setting; `Not` mode tests.
+1. Scheduler and note swing: queue, enqueue/fire, cut rule, following an external clock, recording
+   on the swung grid, clock outputs per `swg`, the `swg` setting; tests for both modes.
 2. Rolls: sorted speeds, global grid, swing rule, start-up default; roll tests.
 3. Docs: README (features), KNOWN_ISSUES.md (S-B6 now fixed in `Not` mode), config menu and roll
    table, a changelog entry for 2.0.0.
@@ -152,5 +163,5 @@ caught.
 - A swung pattern with flams: the flam spacing is intact.
 - Every roll speed, also on an odd-length track; recording a swung part.
 - Odd track lengths and a pattern change with swing; `swg` saved and loaded with the settings.
-- `swg` = `Clk` still feels like before.
+- `swg` = `Clk`: notes feel as before, gear synced to the LXR swings along.
 - CPU meter build: the load with dense flams and 64th rolls at a high tempo.
