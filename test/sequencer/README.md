@@ -24,7 +24,10 @@ Three checks:
   in the same fire pass) and the per-pattern swing a pattern change loads; following an external
   clock the steps start on the clock, steps that play early are queued one step ahead with the
   predicted start; (B) Not mode: MIDI clock and clock outputs on the straight grid and identical to
-  the same scenario without swing; (C) Clk mode: the pulses of a swung step later by
+  the same scenario without swing; rolls on the global grid (a hit where the tick count since the
+  start is a multiple of the speed's interval: 384, 192, 96, 48, 32, 24, 16, 12, 8, 6 ticks), 16
+  and slower with their step's swing, faster ones straight, pressed mid-step from the next tick,
+  released: pending hits removed; (C) Clk mode: the pulses of a swung step later by
   swing x (1 - tick/24), the notes identical to Not mode; (D) no queue overflow; (E) the scenarios
   without swing on the internal clock compared with stock.
 - recording: the recorded steps must be the played steps.
@@ -32,8 +35,9 @@ Three checks:
 
 `golden-stock/` holds the same scenarios run on the stock sequencer (1.4.1 with the recording fix,
 commit 76413d0), for reference: `check.py golden-stock golden-stock` shows which rules stock breaks
-(14 of 45 scenarios pass: every scenario with swing or an external clock fails). Not used as an
-expected result, except (E): the 12 scenarios without swing on the internal clock are identical.
+(every scenario with swing or an external clock fails, and the new roll speeds). Not used as an
+expected result, except (E): the scenarios without swing on the internal clock and the existing
+roll speeds are identical.
 
 Time model, from the firmware: the system tick (TIM14) runs at 108 MHz / 13501 / 2 (0.25 ms), the
 audio engine renders 64-sample blocks at 44140 Hz (1.45 ms) and calls `seq_tick()` before each
@@ -42,7 +46,9 @@ them, like received MIDI. Each scenario runs in its own process, so no state is 
 
 Scenarios (`main.c`): straight 16ths; swing 0-127 at 150 bpm (and 64 at 93 bpm) with flams and
 micro-shifts on straight and swung steps, also a late shift past the next step's first hit; a
-15-step track; a pattern change; every roll speed (and 1/8 and 16 with swing); MIDI clock (steady,
+15-step track; a pattern change; every roll speed (One, 1/1, 1/2, 1/4, 1/8, 8T, 16, 16T, 32, 32T,
+64; 1/8, 8T, 16, 32 and 64 also with swing; 64 at 150 bpm; 32 following MIDI clock; 1/4 on a
+15-step track); MIDI clock (steady,
 jittered +-1 ms, a tempo ramp) and analog clock (steady, jittered); stop and start in the middle of
 a bar; recording 3 ms early and late, 2 ms either side of the middle between steps (with the wrap
 from the last step to the first) and right after start; names ending in `_clk`: swing mode Clk.

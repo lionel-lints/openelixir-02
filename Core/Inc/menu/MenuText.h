@@ -303,23 +303,22 @@ const char lfoWaveNames[][4]  =
 	{"xdn"},
 };
 //-----------------------------------------------------------------
+//roll speeds, slowest to fastest (OpenElixir-02 2.0): the interval of each is in
+//seq_setRollRate(). T = triplet.
 const char rollRateNames[][4]  =
 {
-	{6},		//number of entries
-	{"One"},		
-	{"1/1"},		
+	{11},		//number of entries
+	{"One"},
+	{"1/1"},
 	{"1/2"},
-	{"1/4"},		
-	{"1/8"},		
-	{"16"},		
-	{"24"},		
-	{"32"},		
-	{"48"},		
-	{"64"},		
-	{"128"},
-	{"1/3"},
-	{"1/6"},
-	{"12"},
+	{"1/4"},
+	{"1/8"},
+	{"8T"},
+	{"16"},
+	{"16T"},
+	{"32"},
+	{"32T"},
+	{"64"},
 };
 //-----------------------------------------------------------------
 const char syncRateNames[][4]  =

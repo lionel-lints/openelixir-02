@@ -1080,7 +1080,7 @@ void menu_init()
 
 
 	//initialize the roll value
-	activeParameters[PAR_ROLL] = 5;
+	activeParameters[PAR_ROLL] = 6;	//"16" (seq_rollInterval starts at 24 ticks)
 	//DJ filter off (not saved)
 	activeParameters[PAR_DJ_FILTER] = DJ_FILTER_OFF;
 	activeParameters[PAR_DJ_RESO] = 0;
@@ -4188,23 +4188,7 @@ void menu_parseGlobalParam(uint16_t paramNr, uint8_t value)
 
 	case PAR_ROLL:
 	{
-		/*roll rates
-			0 - one shot immediate trigger
-			1 - 1/1
-			2 - 1/2
-			3 - 1/3
-			4 - 1/4
-			5 - 1/6
-			6 - 1/8
-			7 - 1/12
-			8 - 1/16
-			9 - 1/24
-			10 - 1/32
-			11 - 1/48
-			12 - 1/64
-			13 - 1/96
-			14 - 1/128
-		 */
+		//roll speed: the index in rollRateNames (One, 1/1 ... 64), mapped to an interval in seq_setRollRate()
 		frontPanel_sendData(SEQ_CC,SEQ_ROLL_RATE,value);
 	}
 	break;

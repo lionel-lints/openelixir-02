@@ -22,7 +22,8 @@ import os
 import sys
 
 FLAM_SUBSTEPS = [1, 2, 3, 4, 6, 8]
-ROLL_STEPS = {1: 16, 2: 8, 3: 4, 4: 2, 5: 1}       # menu value -> steps between roll hits
+# roll speed (menu index: One, 1/1, 1/2, 1/4, 1/8, 8T, 16, 16T, 32, 32T, 64) -> 96 ppq ticks
+ROLL_INTERVAL = [0, 384, 192, 96, 48, 32, 24, 16, 12, 8, 6]
 WINDOW = 8                                          # MIDI clock tempo estimate (clockSync.c)
 
 
@@ -190,19 +191,45 @@ def expected_hits(tl):
             for k in range(num):
                 hits[track].append((g + delay + shift * 3 * t + k * (24 // num) * t, sid, k == 0, False, drop))
     if tl.roll:
-        rate = tl.roll["rate"]
-        tick_s = 60.0 / tl.bpm / 4.0 / 24.0
-        if rate == 0:       # one shot at the press
-            b = tl.block_reaching((tl.roll["on"][0] * 24 + tl.roll["on"][1]) * tick_s)
-            hits[1].append((float(tl.systick(b)), -1, True, True, None))
-        else:
-            for n in range(tl.roll["on"][0] + 1, tl.roll["off"][0] + 1):
-                if (n % 16) % ROLL_STEPS[rate] == 0:
-                    grid, tick = starts[n]
-                    swung = (n + 1) % 2 == 0
-                    delay = tl.swing / 127.0 * 16.0 * tick if swung else 0.0
-                    hits[1].append((grid + delay, n, True, True, None))
+        roll_hits(tl, hits[1])
     return hits
+
+
+def roll_hits(tl, out):
+    """rolls on track 1: held from the press to the release (events before seq_tick in their
+    block). On the global grid: a hit where the tick count since the start is a multiple of the
+    interval; 16 and slower swing with their step, faster ones stay straight. Pressed mid-step,
+    the rest of that step from the next tick that hasn't passed; released, pending hits are
+    removed. "One": one hit at the press."""
+    rate = tl.roll["rate"]
+    tick_s = 60.0 / tl.bpm / 4.0 / 24.0
+    on = tl.block_reaching((tl.roll["on"][0] * 24 + tl.roll["on"][1]) * tick_s)
+    off = tl.block_reaching((tl.roll["off"][0] * 24 + tl.roll["off"][1]) * tick_s)
+    if rate == 0:
+        out.append((float(tl.systick(on)), -1, True, True, None))
+        return
+    interval = ROLL_INTERVAL[rate]
+    swing_on = interval % 24 == 0
+    steps = schedule(tl)
+    started = [(sid, n, g, t) for sid, n, g, t, d in steps if tl.block_due(g) < on]
+    current = started[-1] if started else None
+    for sid, n, grid, tick, drop in steps:
+        if tl.block_due(grid) >= off:
+            break
+        if current and sid < current[0]:
+            continue
+        if current and sid == current[0]:
+            elapsed = tl.systick(on) - grid
+            k0 = max(0, math.ceil(elapsed / tick - 1e-9))
+        elif tl.block_due(grid) >= on:
+            k0 = 0
+        else:
+            continue
+        swung = (n + 1) % 2 == 0
+        delay = tl.swing / 127.0 * 16.0 * tick if (swing_on and swung) else 0.0
+        for k in range(k0, 24):
+            if (n * 24 + k) % interval == 0:
+                out.append((grid + k * tick + delay, sid, True, True, off))
 
 
 def play(tl, queued):

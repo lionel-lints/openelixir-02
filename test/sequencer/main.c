@@ -194,14 +194,26 @@ static Scenario scenarios[] =
 	S("swing064_093",           93,  64, CLOCK_INTERNAL, 32, patternTiming,    NULL),
 	S("oddlength_swing064",    120,  64, CLOCK_INTERNAL, 48, patternOddLength, NULL),
 	S("patternchange_swing040",120,  40, CLOCK_INTERNAL, 48, patternTwo,       eventPatternChange),
-	S("roll0_one",             120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
-	S("roll1_1-1",             120,   0, CLOCK_INTERNAL, 48, patternBasic,     eventRoll),
-	S("roll2_1-2",             120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
-	S("roll3_1-4",             120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
-	S("roll4_1-8",             120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
-	S("roll5_16",              120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
-	S("roll4_1-8_swing064",    120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
-	S("roll5_16_swing064",     120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	//rolls: roll<menu index>_<speed> (One, 1/1, 1/2, 1/4, 1/8, 8T, 16, 16T, 32, 32T, 64)
+	S("roll00_one",            120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll01_1-1",            120,   0, CLOCK_INTERNAL, 48, patternBasic,     eventRoll),
+	S("roll02_1-2",            120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll03_1-4",            120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll04_1-8",            120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll05_8T",             120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll06_16",             120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll07_16T",            120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll08_32",             120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll09_32T",            120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll10_64",             120,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll10_64_150",         150,   0, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll04_1-8_swing064",   120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll05_8T_swing064",    120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll06_16_swing064",    120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll08_32_swing064",    120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll10_64_swing064",    120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll03_1-4_oddlength",  120,   0, CLOCK_INTERNAL, 48, patternOddLength, eventRoll),
+	S("roll08_32_midiclock_swing064", 120, 64, CLOCK_MIDI, 32, patternBasic,   eventRoll),
 	S("midiclock_swing000",    120,   0, CLOCK_MIDI,     32, patternTiming,    NULL),
 	S("midiclock_swing064",    120,  64, CLOCK_MIDI,     32, patternTiming,    NULL),
 	S("analogclock_swing000",  120,   0, CLOCK_ANALOG,   32, patternTiming,    NULL),
@@ -227,7 +239,7 @@ static Scenario scenarios[] =
 	//swing mode Clk (name ending in _clk): the clock outputs swing along, the notes are the same
 	S("swing064_150_clk",      150,  64, CLOCK_INTERNAL, 32, patternTiming,    NULL),
 	S("swing127_150_clk",      150, 127, CLOCK_INTERNAL, 32, patternTiming,    NULL),
-	S("roll5_16_swing064_clk", 120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll06_16_swing064_clk",120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
 	S("midiclock_swing064_clk",120,  64, CLOCK_MIDI,     32, patternTiming,    NULL),
 	S("analogclock_swing064_clk",120,64, CLOCK_ANALOG,   32, patternTiming,    NULL),
 };
@@ -269,7 +281,7 @@ static void run(const Scenario* sc)
 	seq_setShuffle(sc->swing / 127.f);
 	if(sc->pattern) sc->pattern();
 	if(strstr(sc->name, "_clk") && seq_setClockSwing) seq_setClockSwing(1);
-	if(sc->event == eventRoll) rollRate = sc->name[4] - '0';	//roll<rate>_...
+	if(sc->event == eventRoll) rollRate = atoi(sc->name + 4);	//roll<menu index>_...
 	writeHeader(sc);
 	if(sc->event == eventRecord) planHits(sc->name, step_s, sc->swing);
 	int nextHit = 0;

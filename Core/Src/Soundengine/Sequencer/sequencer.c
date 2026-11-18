@@ -49,7 +49,7 @@ void seq_setPendingPatternActive();
 uint8_t seq_prescaleCounter = 0;
 
 uint8_t seq_masterStepCnt=0;				/** keeps track of the played steps between 0 and 127 independent from the track counters*/
-uint8_t seq_rollRate = 1;				//start with roll rate = 1/16
+static uint16_t seq_rollInterval = 24;		/**< 96 ppq ticks between roll hits ("16"), 0: one shot*/
 uint8_t seq_rollState = 0;					/**< each bit represents a voice. if bit is set, roll is active*/
 
 static int8_t 	seq_stepIndex[NUM_TRACKS];	/**< we have 16 steps con 4 bars = 64 steps.
@@ -95,6 +95,7 @@ typedef struct
 	uint8_t vol;
 	uint8_t note;
 } SeqHit;
+static void seq_fireRoll(const uint8_t voice, const SeqHit* hit);
 static SeqHit seq_queue[NUM_TRACKS][SEQ_QUEUE_SIZE];
 static uint8_t seq_queueLen[NUM_TRACKS];
 uint16_t seq_queueDropped = 0;				/**< hits that didn't fit into a queue (the tests require 0)*/
@@ -1128,10 +1129,16 @@ SEQ_NOT_INLINED static void seq_firePending(void)
 				//(rolls also play on muted tracks, as in stock)
 				if(q[i].step != newest || (muted && !(q[i].flags & SEQ_HIT_ROLL)))
 					continue;
-				seq_triggerVoice(track, q[i].vol, q[i].note);
-				if(!(q[i].flags & SEQ_HIT_ROLL))
+				if(q[i].flags & SEQ_HIT_ROLL)
+				{
+					seq_fireRoll(track, &q[i]);
+				}
+				else
+				{
+					seq_triggerVoice(track, q[i].vol, q[i].note);
 					lastWasNoteOn[track] = 1;
-				seq_firedSinceTick |= (uint8_t)(1<<track);
+					seq_firedSinceTick |= (uint8_t)(1<<track);
+				}
 				//a newer step's note ends the repeats of older steps
 				if((q[i].flags & (SEQ_HIT_FIRST|SEQ_HIT_ROLL)) == SEQ_HIT_FIRST)
 					cut = 1;
@@ -1228,6 +1235,54 @@ SEQ_NOT_INLINED static void seq_queueStepNotes(void)
 				seq_enqueueStep(t, next, nextPattern, (uint8_t)(seq_masterStepCnt+1), seq_rndValue[t].next, stepLength);
 		}
 	}
+}
+//------------------------------------------------------------------------------
+//a roll hit sounds (and is recorded, as in stock)
+static void seq_fireRoll(const uint8_t voice, const SeqHit* hit)
+{
+	seq_triggerVoice(voice, hit->vol, hit->note);
+	seq_addNote(voice, hit->vol, hit->note);
+}
+//------------------------------------------------------------------------------
+//queue a held roll's hits of the current step from tick k0 on. Rolls are on the global grid: a
+//hit where the tick count since the start is a multiple of the interval (the count wraps after
+//256 steps = 6144 ticks, which every interval divides). Rolls whose hits are all on 16ths
+//(16 and slower) swing with their step; the faster ones stay straight.
+SEQ_NOT_INLINED static void seq_queueRollHits(const uint8_t voice, const uint8_t k0)
+{
+	if(seq_rollInterval == 0)
+		return;
+	const uint16_t base = (uint16_t)((uint8_t)(seq_masterStepCnt - 1)) * 24;
+	const float tick = seq_tickLength();
+	const float swing = (seq_rollInterval % 24) == 0 ? seq_swingDelay(voice, seq_masterStepCnt) : 0.f;
+	const int8_t stepIdx = seq_stepIndex[voice];
+	const uint8_t note = stepIdx >= 0 ? seq_patternSet.seq_subStepPattern[seq_activePattern][voice][stepIdx].note : SEQ_DEFAULT_NOTE;
+	const uint32_t now = seq_now();
+	for(uint8_t k=k0;k<24;k++)
+	{
+		if((base + k) % seq_rollInterval != 0)
+			continue;
+		const SeqHit hit = { seq_stepGrid + (uint32_t)seq_toTime(k*tick + swing), seq_masterStepCnt,
+				SEQ_HIT_FIRST|SEQ_HIT_ROLL, ROLL_VOLUME, note };
+		//due now (a straight step's first hit): at once, like stock
+		if(seq_isDue(hit.time, now))
+			seq_fireRoll(voice, &hit);
+		else
+			seq_queueInsert(voice, &hit);
+	}
+}
+//------------------------------------------------------------------------------
+//a released roll: its pending hits don't sound
+static void seq_removeRollHits(const uint8_t voice)
+{
+	SeqHit* q = seq_queue[voice];
+	uint8_t kept = 0;
+	for(uint8_t i=0;i<seq_queueLen[voice];i++)
+	{
+		if(!(q[i].flags & SEQ_HIT_ROLL))
+			q[kept++] = q[i];
+	}
+	seq_queueLen[voice] = kept;
 }
 //------------------------------------------------------------------------------
 //everything a tick does after seq_nextStep(): clock output, notes, MIDI clock
@@ -1453,39 +1508,15 @@ IN_ITCM_RAM void seq_nextStep()
 		} // if this track is not muted
 
 
-	//---- check if the roll mode has to trigger the voice
-	if(seq_rollRate!=0xff) //not in oneshot mode
-	{
-		if(seq_rollState & (1<<i))
-		{
-			//check if roll is active
-			{
-				if((seq_stepIndex[i]%seq_rollRate)==0)
-				{
-					const uint8_t vol = ROLL_VOLUME;
-
-					const uint8_t note = seq_patternSet.seq_subStepPattern[seq_activePattern][i][seq_stepIndex[i]].note;
-					//on a swung step with the step's swing (the clock doesn't stretch any more)
-					const float swing = seq_swingDelay((uint8_t)i, seq_masterStepCnt);
-					if(swing <= 0)
-					{
-						seq_triggerVoice(i,vol,note);
-					}
-					else
-					{
-						const SeqHit hit = { seq_stepGrid + (uint32_t)seq_toTime(swing), seq_masterStepCnt,
-								SEQ_HIT_FIRST|SEQ_HIT_ROLL, vol, note };
-						seq_queueInsert((uint8_t)i, &hit);
-					}
-
-					seq_addNote(i,vol, note); // todo should this be note or should it be SEQ_DEFAULT_NOTE (before my change it would have been SEQ_DEFAULT_NOTE)
-				}
-			}
-		}
-	}//end oneshot
 
 }
 	seq_queueStepNotes();
+	//the held rolls' hits of this step
+	for(uint8_t v=0;v<NUM_TRACKS;v++)
+	{
+		if(seq_rollState & (1<<v))
+			seq_queueRollHits(v, 0);
+	}
 	//following an external clock the step arrives in the middle of a block: its hits sound now
 	if(seq_getExtSync())
 		seq_firePending();
@@ -2064,101 +2095,32 @@ void seq_setRoll(uint8_t voice, uint8_t onOff)
 	if(onOff) {
 		seq_rollState |= (1<<voice);
 		//if seq is stopped, always use oneshot mode
-		if((seq_rollRate == 0xff) || (seq_isRunning() == 0) ) {
+		if((seq_rollInterval == 0) || (seq_isRunning() == 0) ) {
 			//trigger one shot
 			seq_triggerVoice(voice,ROLL_VOLUME,SEQ_DEFAULT_NOTE);
 			//record roll notes
 			seq_addNote(voice,ROLL_VOLUME,SEQ_DEFAULT_NOTE);
 		}
+		else if(seq_queuePrimed)
+		{
+			//the rest of the current step at once (from the next tick that hasn't passed)
+			const float elapsed = (float)(int32_t)(seq_now() - seq_stepGrid) / SEQ_TIME_SCALE;
+			const int16_t k0 = (int16_t)ceilf(elapsed / seq_tickLength());
+			if(k0 < 24)
+				seq_queueRollHits(voice, (uint8_t)(k0 < 0 ? 0 : k0));
+		}
 	} else {
 		seq_rollState &= ~(1<<voice);
+		seq_removeRollHits(voice);
 	}
 };
 //--------------------------------------------------------------------------------
+//rate: the index in the menu's roll speeds (One, 1/1, 1/2, 1/4, 1/8, 8T, 16, 16T, 32, 32T, 64)
 void seq_setRollRate(uint8_t rate)
 {
-	/*
-	0 - one shot immediate trigger
-
-	{"1/1"},
-	{"1/2"},
-	{"1/4"},
-	{"1/8"},
-	{"16"},
-	{"24"},
-	{"32"},
-	{"48"},
-	{"64"},
-	{"128"},
-	{"1/3"},
-	{"1/6"},
-	{"12"},
-				*/
-
-	switch(rate)
-	{
-	case 0:
-		seq_rollRate = 0xfe;
-		break;
-	case 1: // 1/1
-		seq_rollRate = 15;
-		break;
-
-	case 2: // 1/2
-		seq_rollRate = 7;
-		break;
-
-
-
-	case 3:// 1/4
-		seq_rollRate = 3;
-			break;
-
-
-
-	case 4:// 1/8
-			seq_rollRate = 1;
-			break;
-
-
-default:
-	case 5:// 1/16
-		seq_rollRate = 0;
-			break;
-/*
-	case 6: // 1/24
-		seq_rollRate = 0x05;
-		break;
-
-	case 7:// 1/32
-		seq_rollRate = 0x03;
-		break;
-
-	case 8:// 1/48
-		seq_rollRate = 0x02;
-		break;
-
-	case 9://1/64
-		seq_rollRate = 0x01;
-		break;
-
-	case 10://1/128
-		seq_rollRate = 0x00;
-		break;
-
-	case 11:// 1/3
-		seq_rollRate = 0x6;
-			break;
-	case 12:// 1/6
-		seq_rollRate = 0x31;
-			break;
-	case 13:// 1/12
-		seq_rollRate = 0x0a;
-			break;
-			*/
-	}
-	seq_rollRate +=1; //is there a reason for this offset here? seems the value could be assigned directly!?!
-
+	//96 ppq ticks between the hits; 0: one shot
+	static const uint16_t intervals[] = { 0, 384, 192, 96, 48, 32, 24, 16, 12, 8, 6 };
+	seq_rollInterval = rate < sizeof(intervals)/sizeof(intervals[0]) ? intervals[rate] : 24;
 }
 //------------------------------------------------------------------------
 /** quantize a step to the seq_quantisation value*/
