@@ -14,6 +14,7 @@
 //#include "../config.h"
 #include <frontPanelParser_ui.h>
 #include "Preset/PresetManager.h"
+#include "Preset/GlobalDefaults.h"
 #include "Preset/KitEngines.h"
 //#include "../Hardware/SD/ff.h"
 #include "ff.h"
@@ -1096,10 +1097,9 @@ static uint8_t preset_readGlobalData()
 	uint8_t data[NUM_PARAMS - PAR_BEGINNING_OF_GLOBALS];
 	if(f_read((FIL*)&SDFile,data,numGlobals,&bytesRead) != FR_OK || bytesRead < numStockGlobals) return 0;
 	memcpy(&activeParameters[PAR_BEGINNING_OF_GLOBALS],data,bytesRead);
-	if(bytesRead < numGlobals)
-	{
-		activeParameters[PAR_MIXER_LIMITER] = 1;
-	}
+	//files of older versions end earlier: only the settings they don't have get their defaults
+	//(a 1.4 file has the limiter but not the swing mode: its limiter setting stays)
+	preset_defaultMissingGlobals(activeParameters, bytesRead);
 	return 1;
 
 #endif
@@ -1186,6 +1186,7 @@ void preset_loadDefaultGlobals()
 	activeParameters[PAR_PATTERN_MODE] = 1; //auto
 
 	activeParameters[PAR_MIXER_LIMITER] = 1; //on
+	activeParameters[PAR_SWING_MODE] = 0; //Not: clock outputs straight
 
 }
 //----------------------------------------------------

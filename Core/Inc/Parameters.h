@@ -427,6 +427,7 @@ enum ParamEnums
 		PAR_PATTERN_MODE,
 
 	PAR_MIXER_LIMITER,					// OpenElixir-02: 1 = 32-bit mix with output limiter, 0 = stock mix (clipping)
+	PAR_SWING_MODE,						// OpenElixir-02 2.0: clock outputs 0 = straight (Not), 1 = swung like the notes (Clk)
 
 	NUM_PARAMS	
 };

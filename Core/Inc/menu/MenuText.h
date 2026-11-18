@@ -45,6 +45,7 @@
 #define MENU_AUDIO_OUT_FX	26
 #define MENU_STEP_CHORD		27
 #define MENU_STEP_DIR		28
+#define MENU_SWING_MODE		29
 
 //-----------------------------------------------------------------
 // Shared texts. Reduce mem usage by pooling common text
@@ -104,6 +105,13 @@ const char stepDirNames[][4] =
 	{2},		//number of entries
 	{"Up"},
 	{"Dn"},
+};
+//swing mode (OpenElixir-02 2.0): the notes always swing; the clock outputs straight or swung
+const char swingModeNames[][4] =
+{
+	{2},		//number of entries
+	{"Not"},
+	{"Clk"},
 };
 //-----------------------------------------------------------------
 const char stepShiftNames[][4] =
@@ -520,6 +528,7 @@ const char shortNames[][4]  =
 	{"dj"},
 	{"chd"},
 	{"dir"},
+	{"swg"},
 
 };
 //-----------------------------------------------------------------
@@ -659,6 +668,7 @@ const char longNames[][16] =
 	{"Arp Dir"},
 	{"DJ Cut"},
 	{"DJ Reso"},
+	{"Swing Md"},
 };
 
 

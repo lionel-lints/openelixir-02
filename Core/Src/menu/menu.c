@@ -270,6 +270,7 @@ const Name valueNames[NUM_NAMES] =
 		{SHORT_SR, CAT_PERF, LONG_SAMPLE_RATE},/*TEXT_PERF_SRT*/
 		{SHORT_DJ_FILTER, CAT_PERF, LONG_PERF_DJ},/*TEXT_PERF_DJ*/
 		{SHORT_FIL_RESO, CAT_PERF, LONG_PERF_RES},/*TEXT_PERF_RES*/
+		{SHORT_SWING_MODE, CAT_GLOBAL, LONG_SWING_MODE},/*TEXT_SWING_MODE*/
 
 
 };
@@ -587,6 +588,7 @@ const enum Datatypes PROGMEM parameter_dtypes[NUM_PARAMS] = {
 	    /*PAR_MIDI_NOTE7*/		DTYPE_NOTE_NAME,
 		/*PAR_PATTERN_MODE*/ DTYPE_MENU | (MENU_PAT_MODE<<8),
 		/*PAR_MIXER_LIMITER*/	DTYPE_ON_OFF,
+		/*PAR_SWING_MODE*/		DTYPE_MENU | (MENU_SWING_MODE<<8),
 };
 //---------------------------------------------------------------
 //Voice pages of slots that run a non-stock engine: built from the engine's stock
@@ -3127,6 +3129,8 @@ static uint8_t getMaxEntriesForMenu(uint8_t menuId)
 
 	case MENU_STEP_DIR:
 		return stepDirNames[0][0];
+	case MENU_SWING_MODE:
+		return swingModeNames[0][0];
 
 	default:
 		return 0;
@@ -3244,6 +3248,9 @@ static void getMenuItemNameForValue(const uint8_t menuId, const uint8_t curParmV
 
 	case MENU_STEP_DIR:
 		p = MENU_ITEM(stepDirNames);
+		break;
+	case MENU_SWING_MODE:
+		p = MENU_ITEM(swingModeNames);
 		break;
 
 
@@ -4131,6 +4138,10 @@ void menu_parseGlobalParam(uint16_t paramNr, uint8_t value)
 
 	case PAR_MIXER_LIMITER:
 		mixer_limiterOn = value != 0;
+		break;
+
+	case PAR_SWING_MODE:
+		seq_setClockSwing(value);
 		break;
 
 	case PAR_BPM:

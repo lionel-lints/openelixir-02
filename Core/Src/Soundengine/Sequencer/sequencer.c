@@ -24,6 +24,7 @@
 #include "Soundengine/DSPAudio/CymbalVoice.h"
 #include "Soundengine/Sequencer/sequencer.h"
 #include <string.h>
+#include <math.h>
 #include <Soundengine/MIDI/CortexParser.h>
 #include "Soundengine/USB/usb_manager.h"
 #include "Soundengine/Sequencer/clockSync.h"
@@ -48,7 +49,6 @@ void seq_setPendingPatternActive();
 uint8_t seq_prescaleCounter = 0;
 
 uint8_t seq_masterStepCnt=0;				/** keeps track of the played steps between 0 and 127 independent from the track counters*/
-static uint32_t seq_stepStartTime = 0;		/**< system time the current step started (a swung step: after its swing delay)*/
 uint8_t seq_rollRate = 1;				//start with roll rate = 1/16
 uint8_t seq_rollState = 0;					/**< each bit represents a voice. if bit is set, roll is active*/
 
@@ -58,7 +58,6 @@ static int8_t 	seq_stepIndex[NUM_TRACKS];	/**< we have 16 steps con 4 bars = 64 
 static uint16_t seq_tempo = 120;			/**< seq speed in bpm*/
 
 static uint32_t	seq_lastTick = 0;			/**< stores the time the last step change occured*/
-uint8_t isStepShuffled=0;
 static float	seq_deltaT;					/**< time in [ms] until the next step
  	 	 	 	 	 	 	 	 	 	 	 1000ms = 1 sec
  	 	 	 	 	 	 	 	 	 	 	 1 min = 60 sec*/
@@ -74,6 +73,43 @@ uint8_t seq_lastMasterStep[NUM_TRACKS];		//keeps track of the last triggered mas
 float seq_shuffle = 0;
 
 int8_t seq_stepToSkip[NUM_TRACKS];
+
+//---- note scheduler (OpenElixir-02 2.0, docs/PLAN-note-swing.md) ----
+//The 96 ppq clock always runs straight. The hits of a step (its flam/arp substeps, with
+//micro-shift and swing) are put into a queue per track with the exact time they sound and
+//fired in the first audio block at or after it. Swing doesn't stretch the clock any more;
+//seq_clockSwing only decides whether the clock outputs swing along.
+//Times are in 1/SEQ_TIME_SCALE system ticks (wraps after 18 hours: compared as differences).
+#define SEQ_TIME_SCALE		16
+#define SEQ_QUEUE_SIZE		16		//a step has at most 8 substeps, older steps' repeats are cut
+#define SEQ_CLOCK_QUEUE_SIZE	32		//the pulses of one swung step (24) and some
+#define SEQ_HIT_FIRST		0x01	//the step's first hit (its note): never cut by a newer step
+#define SEQ_HIT_ROLL		0x02	//a roll hit: no MIDI note off afterwards (stock)
+//run once per step or per hit: kept out of seq_nextStep() (ITCM, which is nearly full)
+#define SEQ_NOT_INLINED		__attribute__((noinline))
+typedef struct
+{
+	uint32_t time;		//when it sounds
+	uint8_t step;		//master step count of the step it belongs to
+	uint8_t flags;
+	uint8_t vol;
+	uint8_t note;
+} SeqHit;
+static SeqHit seq_queue[NUM_TRACKS][SEQ_QUEUE_SIZE];
+static uint8_t seq_queueLen[NUM_TRACKS];
+uint16_t seq_queueDropped = 0;				/**< hits that didn't fit into a queue (the tests require 0)*/
+static uint8_t seq_firedSinceTick = 0;		/**< bit per track: a hit sounded since the last tick (MIDI note off)*/
+typedef struct
+{
+	uint32_t time;
+	uint8_t cnt;		//tick in the step (clock output)
+	uint8_t midi;		//1: MIDI clock, 0: clock output tick
+} SeqClockPulse;
+static SeqClockPulse seq_clockQueue[SEQ_CLOCK_QUEUE_SIZE];
+static uint8_t seq_clockQueueLen = 0;
+uint8_t seq_clockSwing = 0;					/**< 0 (Not): clock outputs straight, 1 (Clk): they swing like the notes*/
+static uint32_t seq_stepGrid = 0;			/**< exact time the current step started (straight grid)*/
+static float seq_tickLateness = 0;			/**< system ticks the tick being processed is late (seq_tick)*/
 
 
 
@@ -138,7 +174,6 @@ const float seq_shuffleTable[16] =
 		0.234375f,
 };
 
-float seq_lastShuffle = 0;
 #if USE_PATTERN_EDIT_BUFFER
 	PatternSet seq_patterns;
 #else
@@ -278,6 +313,11 @@ void seq_setShuffle(float shuffle)
 	seq_shuffle = shuffle;
 }
 //------------------------------------------------------------------------------
+void seq_setClockSwing(uint8_t on)
+{
+	seq_clockSwing = on != 0;
+}
+//------------------------------------------------------------------------------
 void seq_setTrackLength(uint8_t trackNr, uint8_t length)
 {
 	//set new end marker
@@ -357,87 +397,44 @@ uint8_t seq_getTrackRotation(uint8_t trackNr)
 }
 */
 //------------------------------------------------------------------------------
-float seq_getDeltaTShuffleDelay(uint16_t bpm)
+//------------------------------------------------------------------------------
+//time of one 96 ppq tick in system ticks (0.25 ms): 24 per 16th step
+SEQ_NOT_INLINED static float seq_tickLength(void)
 {
-	if(bpm==0) return 1;
-
-	float dT;
-	/* without substeps notes
-	 *
-	 * internal clock is 96 PPQ
-	 * wit 16 steps per beat
-	 * we have 4 ppq (16/4) so we get 96ppq/4ppq= prescaler 24
-	 *
-	 *
-	 * stuff below were substep calculations
-	 */
-	//--- calc deltaT ----
-	// for 4/4tel takt -> 1 beat = 4 main steps = 4*8 = 32 sub steps
-	// 120 bpm 4/4tel = 120 * 1 beat / 60sec = 120 * 32 in 60 sec;
-	dT 	= (1000*60.f)/bpm; 	//bei 12 = 500ms = time for one beat (float: the integer division ran up to 0.2 % fast)
-	dT /= 96.f; //we run the internal clock at 96ppq -> seq clock 32 ppq == prescaler 3, midi clock 24 ppq == prescale 4
-	dT *= 4;
-	//32.f;					// time for one beat / number of steps per beat
-
-
-
-	const float shuffleFactor = seq_shuffle;
-	const float originalDeltaT = dT;
-
-	return shuffleFactor * originalDeltaT * 16.f;
-
-
+	if(seq_tempo == 0) return 1;
+	return (1000*60.f)/seq_tempo/96.f*4.f;	//float: the integer division ran up to 0.45 % fast
 }
 //------------------------------------------------------------------------------
-static void seq_calcDeltaT(uint16_t bpm, uint8_t isShuffled)
+//the next tick interval. The clock always runs straight: swing is in the note times (and,
+//with seq_clockSwing, in the clock output times), not in the clock any more.
+static void seq_calcDeltaT(uint16_t bpm)
 {
-
-	/* without substeps notes
-	 *
-	 * internal clock is 96 PPQ
-	 * wit 16 steps per beat
-	 * we have 4 ppq (16/4) so we get 96ppq/4ppq= prescaler 24
-	 *
-	 *
-	 * stuff below were substep calculations
-	 */
-	//--- calc deltaT ----
-	// for 4/4tel takt -> 1 beat = 4 main steps = 4*8 = 32 sub steps
-	// 120 bpm 4/4tel = 120 * 1 beat / 60sec = 120 * 32 in 60 sec;
-	seq_deltaT 	= (1000*60.f)/bpm; 	//bei 12 = 500ms = time for one beat (float: the integer division ran up to 0.2 % fast)
-	seq_deltaT /= 96.f; //we run the internal clock at 96ppq -> seq clock 32 ppq == prescaler 3, midi clock 24 ppq == prescale 4
-	seq_deltaT *= 4;
-	//32.f;					// time for one beat / number of steps per beat
-
-	//--- calc shuffle ---
-	if(seq_shuffle != 0)
-	{
-#if 0
-		//every 2nd and 4th 16th note in a beat is shifted full
-		//=> step 8 and step 24
-		//every 2nd 16th note in half a beat
-		//every beat has 32 steps => half = 16
-		uint8_t stepInHalfBeat = seq_masterStepCnt&0xf;
-		const float shuffleFactor = seq_shuffleTable[stepInHalfBeat] * seq_shuffle;
-		const float originalDeltaT = seq_deltaT;
-
-		seq_deltaT += shuffleFactor * originalDeltaT * 16.f;
-		seq_deltaT -= seq_lastShuffle * originalDeltaT * 16.f;
-
-		seq_lastShuffle = shuffleFactor;
-#endif
-
-
-		uint8_t isStepShuffled = isShuffled;//seq_masterStepCnt%2 == 1;
-		const float shuffleFactor = isStepShuffled * seq_shuffle;
-		const float originalDeltaT = seq_deltaT;
-
-		seq_deltaT += shuffleFactor * originalDeltaT * 16.f;
-		seq_deltaT -= seq_lastShuffle * originalDeltaT * 16.f;
-
-		seq_lastShuffle = shuffleFactor;
-
-	}
+	(void)bpm;
+	seq_deltaT = seq_tickLength();
+}
+//------------------------------------------------------------------------------
+//the swing delay of a step in system ticks. All swing goes through here (per-track swing:
+//only this function). The 2nd and 4th 16th of each beat are late: the steps with an even
+//master step count (the first step after start counts 1).
+SEQ_NOT_INLINED static float seq_swingDelay(uint8_t track, uint8_t masterStep)
+{
+	(void)track;
+	return (masterStep & 1) ? 0.f : seq_shuffle * 16.f * seq_tickLength();
+}
+//------------------------------------------------------------------------------
+static inline uint32_t seq_now(void)
+{
+	return systick_ticks * SEQ_TIME_SCALE;
+}
+//system ticks (float) -> scheduler time units, rounded up: a hit sounds in the first block at or
+//after its exact time, like a stock tick
+static inline int32_t seq_toTime(float systicks)
+{
+	return (int32_t)ceilf(systicks * SEQ_TIME_SCALE);
+}
+static inline uint8_t seq_isDue(uint32_t time, uint32_t now)
+{
+	return (int32_t)(time - now) <= 0;
 }
 //------------------------------------------------------------------------------
 void seq_setBpm(uint16_t bpm)
@@ -946,183 +943,6 @@ int8_t getShiftValue(uint8_t in)
 		break;
 	}
 }
-uint32_t flamIdxToPattern(uint8_t flamIdx)
-{
-	switch(flamIdx)
-	{
-	default:
-	case 0: //off
-		return 0b100000000000000000000000;
-		break;
-
-	case 1: //x2
-		return 0b100000000000100000000000;
-		break;
-
-	case 2: //x3
-		return 0b100000001000000010000000;
-		break;
-
-	case 3: //x4
-		return 0b100000100000100000100000;
-		break;
-
-	case 4: //x6
-		return 0b100010001000100010001000;
-		break;
-
-	case 5: //x8
-		return 0b100100100100100100100100;
-		break;
-	}
-}
-//return pattern as 8 bit binary value (steps 0-7)
-uint32_t seq_getShiftFlamPattern(const uint8_t track, uint8_t step, StepPosition stepPos)
-{
-#if 0
-	const uint8_t length = seq_patternSet.length[seq_activePattern][track];
-	const uint8_t nextStep = (step+1)%length;
-	const uint8_t prevStep = step != 0 ? step - 1 : length-1;
-
-	/* we have 3 possible step sources:
-	 * - flammed AND positive shifted notes from the previous step
-	 * - current step data
-	 * - negative shifted data from the next step
-	 */
-
-	uint8_t prevStepActive = seq_intIsMainStepActive(track,prevStep,seq_activePattern);
-	uint8_t currentStepActive = seq_intIsMainStepActive(track,step,seq_activePattern);
-	uint8_t nextStepActive = seq_intIsMainStepActive(track,nextStep,seq_activePattern);
-
-
-	const uint8_t flamCurrentStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][step].flam;
-	const uint8_t flamNextStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][nextStep].flam;
-	const uint8_t flamPrevStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][prevStep].flam;
-	const uint8_t shiftCurrentStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][step].shift;
-	const uint8_t shiftNextStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][nextStep].shift;
-	const uint8_t shiftPrevStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][prevStep].shift;
-
-	//calc flam step pattern
-	StepPattern prev, current, next;
-
-	//check probability
-	if( (seq_rndValue[track].prev) > seq_patternSet.seq_subStepPattern[seq_activePattern][track][prevStep].prob ) prevStepActive = 0;
-	if( (seq_rndValue[track].current) > seq_patternSet.seq_subStepPattern[seq_activePattern][track][step].prob ) currentStepActive = 0;
-	if( (seq_rndValue[track].next) > seq_patternSet.seq_subStepPattern[seq_activePattern][track][nextStep].prob ) nextStepActive = 0;
-
-	//add step pattern for active steps
-	prev.StepData.prevStep = prevStepActive ? flamIdxToPattern(flamPrevStep) : 0;
-	current.StepData.prevStep = currentStepActive ? flamIdxToPattern(flamCurrentStep) : 0;
-	next.StepData.prevStep = nextStepActive ? flamIdxToPattern(flamNextStep) : 0;
-
-	//add shift
-	prev.completeData = shiftPrevStep >= 0 ? prev.completeData >> shiftPrevStep : prev.completeData << shiftPrevStep;
-	current.completeData = shiftCurrentStep >= 0 ? current.completeData >> shiftCurrentStep : current.completeData << shiftCurrentStep;
-	next.completeData = shiftNextStep >= 0 ? next.completeData >> shiftNextStep : next.completeData << shiftNextStep;
-
-	//combine
-	uint8_t pattern =  prev.StepData.currentStep | current.StepData.currentStep | next.StepData.currentStep;
-
-	return pattern;
-#else
-		uint8_t currentStepActive = seq_intIsMainStepActive(track,step,seq_activePattern);
-		if(!currentStepActive) return 0;
-
-
-		const  uint8_t flamCurrentStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][step].flam;
-		int8_t shiftCurrentStep = getShiftValue(seq_patternSet.seq_stepTiming[seq_activePattern][track][step].shift);
-
-		uint32_t stepPattern;
-
-		//check probability
-		switch(stepPos)
-		{
-		case STEP_PREV:
-			if( (seq_rndValue[track].prev) > seq_patternSet.seq_subStepPattern[seq_activePattern][track][step].prob ) currentStepActive = 0;
-			break;
-
-		default:
-		case STEP_CURRENT:
-			if( (seq_rndValue[track].current) > seq_patternSet.seq_subStepPattern[seq_activePattern][track][step].prob ) currentStepActive = 0;
-			break;
-
-		case STEP_NEXT:
-			if( (seq_rndValue[track].next) > seq_patternSet.seq_subStepPattern[seq_activePattern][track][step].prob ) currentStepActive = 0;
-			break;
-		}
-		if(!currentStepActive) return 0;
-
-		//add step pattern for active steps
-		stepPattern = flamIdxToPattern(flamCurrentStep);
-
-		//we have 24 pulses per step (96ppq) but only 8 possible shift values (0-7)
-		shiftCurrentStep *= 3;
-
-		//since we use this function to determine what to play at the current step, we have to look at different shifted sections depending of which step we calculate
-		//i.e. we only play the data from the previous step, that was shifted into the current(next) step
-		if(shiftCurrentStep == 0)
-		{
-			switch(stepPos)
-			{
-				case STEP_PREV:
-					return 0;	//nothing from prev step is shifted forward to this one
-					break;
-
-				default:
-				case STEP_CURRENT:
-					return (stepPattern) & 0xFFFFFF;
-					break;
-
-				case STEP_NEXT:
-					return 0;	//nothing from next step is shifted backwards to this one
-					break;
-			}
-		}
-		else if(shiftCurrentStep > 0)
-		{
-			switch(stepPos)
-			{
-				case STEP_PREV:
-					//data from prev step is shifted forward to this one
-					return (stepPattern << (24-shiftCurrentStep)) & 0xFFFFFF;
-					break;
-
-				default:
-				case STEP_CURRENT:
-					//data is shifted forward, but a rest remains in this step
-					return (stepPattern >> shiftCurrentStep) & 0xFFFFFF;
-					break;
-
-				case STEP_NEXT:
-					return 0;	//nothing from next step is shifted backwards to this one
-					break;
-			}
-		}
-		else
-		{
-			//make shift value positive
-			shiftCurrentStep *= -1;
-			switch(stepPos)
-			{
-				case STEP_PREV:
-					//no data from prev step is shifted forward to this one
-					return 0;
-					break;
-
-				default:
-				case STEP_CURRENT:
-					//data is shifted backwards, but a rest remains in this step
-					return (stepPattern << shiftCurrentStep) & 0xFFFFFF;
-					break;
-
-				case STEP_NEXT:
-					//data from next step is shifted backwards to this one
-					return (stepPattern >> (24-shiftCurrentStep)) & 0xFFFFFF;
-					break;
-			}
-		}
-#endif
-}
 
 //------------------------------------------------------------------------------
 //step arp: chord tones in semitones above the step's note, they repeat one octave higher
@@ -1142,189 +962,285 @@ static const int8_t seq_arpChords[ARP_NUM_CHORDS][5] =
 //number of substeps for the flam values (off, x2, x3, x4, x6, x8)
 static const uint8_t seq_flamSubsteps[6] = {1, 2, 3, 4, 6, 8};
 //------------------------------------------------------------------------------
-//the note a substep of step plays at tick idx of the current step. stepPos tells where idx is
-//relative to step: the step before (STEP_PREV, shifted forward), the step (STEP_CURRENT) or
-//the step after (STEP_NEXT, shifted backwards)
-static uint8_t seq_arpNote(const uint8_t track, const uint8_t step, const StepPosition stepPos, const uint8_t idx)
+//the note substep (0..numSubsteps-1) of a step plays: the step's note, or with the step arp a
+//note of the chord
+SEQ_NOT_INLINED static uint8_t seq_arpNote(const uint8_t track, const uint8_t step, const uint8_t pattern, uint8_t substep, const uint8_t numSubsteps)
 {
-	const uint8_t note = seq_patternSet.seq_subStepPattern[seq_activePattern][track][step].note;
-	const uint8_t arp = seq_patternSet.arp[seq_activePattern][track][step];
+	const uint8_t note = seq_patternSet.seq_subStepPattern[pattern][track][step].note;
+	const uint8_t arp = seq_patternSet.arp[pattern][track][step];
 	const uint8_t chord = arp & ARP_CHORD_MASK;
 	if(chord == ARP_REPEAT || chord >= ARP_NUM_CHORDS)
 		return note;
-
-	const StepTiming timing = seq_patternSet.seq_stepTiming[seq_activePattern][track][step];
-	const uint8_t numSubsteps = timing.flam < 6 ? seq_flamSubsteps[timing.flam] : 1;
-
-	//tick within the step without its shift -> substep
-	int16_t tick = idx - getShiftValue(timing.shift)*3;
-	if(stepPos == STEP_PREV)
-		tick += 24;
-	else if(stepPos == STEP_NEXT)
-		tick -= 24;
-	if(tick < 0)
-		tick = 0;
-	uint8_t substep = (uint8_t)(tick / (24/numSubsteps));
-	if(substep >= numSubsteps)
-		substep = numSubsteps-1;
 	if(arp & ARP_DIR_DOWN)
 		substep = numSubsteps-1 - substep;
-
 	const uint8_t numTones = seq_arpChords[chord][0];
 	const int16_t arpNote = note + seq_arpChords[chord][1 + substep%numTones] + 12*(substep/numTones);
 	return arpNote > 127 ? 127 : (uint8_t)arpNote;
 }
 //------------------------------------------------------------------------------
-uint8_t chokeCurrent=0;
-uint8_t chokeNext=0;
-void seq_processFlam(uint8_t idx)
+//put a hit into the track's queue, sorted by time (equal times keep their order)
+SEQ_NOT_INLINED static void seq_queueInsert(const uint8_t track, const SeqHit* hit)
 {
+	SeqHit* q = seq_queue[track];
+	uint8_t len = seq_queueLen[track];
+	if(len == SEQ_QUEUE_SIZE)
+	{
+		//full: an older step's repeat makes room (first hits are never dropped)
+		int8_t victim = -1;
+		for(uint8_t i=0;i<len;i++)
+		{
+			if(!(q[i].flags & SEQ_HIT_FIRST) && (victim < 0 || (int8_t)(q[i].step - q[victim].step) < 0))
+				victim = (int8_t)i;
+		}
+		seq_queueDropped++;
+		if(victim < 0)
+			return;
+		for(uint8_t i=(uint8_t)victim;i<len-1;i++)
+			q[i] = q[i+1];
+		len--;
+	}
+	uint8_t pos = len;
+	while(pos > 0 && (int32_t)(q[pos-1].time - hit->time) > 0)
+	{
+		q[pos] = q[pos-1];
+		pos--;
+	}
+	q[pos] = *hit;
+	seq_queueLen[track] = len + 1;
+}
+//------------------------------------------------------------------------------
+static uint8_t seq_queuePrimed = 0;			//0: nothing was queued ahead for the next step yet
+static void seq_queueClear(void)
+{
+	memset(seq_queueLen, 0, sizeof(seq_queueLen));
+	seq_clockQueueLen = 0;
+	seq_firedSinceTick = 0;
+	seq_queuePrimed = 0;
+}
+//------------------------------------------------------------------------------
+//queue the hits of a step: its flam/arp substeps, moved by micro-shift and swing.
+//gridOffset: system ticks from seq_stepGrid to the step's straight start (0, or one step
+//ahead for a step that plays early). dice: the step's random value for the probability.
+SEQ_NOT_INLINED static void seq_enqueueStep(const uint8_t track, const uint8_t step, const uint8_t pattern,
+		const uint8_t masterStep, const uint8_t dice, const float gridOffset)
+{
+	if(!seq_intIsMainStepActive(track, step, pattern))
+		return;
+	const Step* s = &seq_patternSet.seq_subStepPattern[pattern][track][step];
+	if(dice > s->prob)
+		return;
+	const StepTiming timing = seq_patternSet.seq_stepTiming[pattern][track][step];
+	const uint8_t numSubsteps = timing.flam < 6 ? seq_flamSubsteps[timing.flam] : 1;
+	const float tick = seq_tickLength();
+	const float start = gridOffset + seq_swingDelay(track, masterStep) + getShiftValue(timing.shift)*3*tick;
+	SeqHit hit;
+	hit.step = masterStep;
+	hit.vol = s->volume & STEP_VOLUME_MASK;
+	for(uint8_t k=0;k<numSubsteps;k++)
+	{
+		hit.time = seq_stepGrid + (uint32_t)seq_toTime(start + k*(24/numSubsteps)*tick);
+		hit.flags = k == 0 ? SEQ_HIT_FIRST : 0;
+		hit.note = seq_arpNote(track, step, pattern, k, numSubsteps);
+		seq_queueInsert(track, &hit);
+	}
+}
+//------------------------------------------------------------------------------
+//the steps that play before their own tick 0 (negative micro-shift) are queued one step early
+SEQ_NOT_INLINED static uint8_t seq_isEarlyStep(const uint8_t track, const uint8_t step, const uint8_t pattern)
+{
+	return getShiftValue(seq_patternSet.seq_stepTiming[pattern][track][step].shift) < 0;
+}
+//------------------------------------------------------------------------------
+static void seq_emitClockPulse(const uint8_t cnt, const uint8_t midi)
+{
+	if(midi)
+		seq_sendRealtime(MIDI_CLOCK);
+	else
+		trigger_clockTick(0, cnt);
+}
+//------------------------------------------------------------------------------
+//a clock output pulse of the tick being processed (tick cnt of the current step). Straight it
+//goes out now; with seq_clockSwing the pulses of a swung step are spread evenly from the swing
+//delay to the end of the step (the next step's first pulse is on time).
+static void seq_clockOut(const uint8_t cnt, const uint8_t midi)
+{
+	float delay = 0;
+	//(not before the first step: a tick of no step doesn't swing)
+	if(seq_clockSwing && seq_running && seq_queuePrimed)
+	{
+		const float swing = seq_swingDelay(0, seq_masterStepCnt);
+		delay = swing - cnt*swing/24.f;
+	}
+	if(delay <= 0 || seq_clockQueueLen >= SEQ_CLOCK_QUEUE_SIZE)
+	{
+		seq_emitClockPulse(cnt, midi);
+		return;
+	}
+	SeqClockPulse* p = &seq_clockQueue[seq_clockQueueLen++];
+	p->time = seq_now() - (uint32_t)seq_toTime(seq_tickLateness) + (uint32_t)seq_toTime(delay);
+	p->cnt = cnt;
+	p->midi = midi;
+}
+//------------------------------------------------------------------------------
+//sound everything that is due: called on every tick and once per audio block
+SEQ_NOT_INLINED static void seq_firePending(void)
+{
+	const uint32_t now = seq_now();
+
+	//clock pulses (in time order: they are queued in order)
+	uint8_t n = 0;
+	while(n < seq_clockQueueLen && seq_isDue(seq_clockQueue[n].time, now))
+	{
+		seq_emitClockPulse(seq_clockQueue[n].cnt, seq_clockQueue[n].midi);
+		n++;
+	}
+	if(n)
+	{
+		memmove(seq_clockQueue, &seq_clockQueue[n], (seq_clockQueueLen-n)*sizeof(SeqClockPulse));
+		seq_clockQueueLen -= n;
+	}
+
 	if(!seq_running)
 		return;
 
-	if(idx==0)
-	{
-		chokeCurrent=0;
-		chokeNext=0;
-	}
-
 	for(uint8_t track=0;track<NUM_TRACKS;track++)
 	{
-		//the step index is -1 until the first step (e.g. with external clock)
-		if(seq_stepIndex[track] < 0)
+		SeqHit* q = seq_queue[track];
+		const uint8_t len = seq_queueLen[track];
+		if(len == 0 || !seq_isDue(q[0].time, now))
 			continue;
-		//if track is not muted
-		if(!(seq_mutedTracks & (1<<track) ) )
+
+		//the newest step among the due hits sounds; hits of older steps due in the same block
+		//are merged into it (stock: one trigger per track and tick)
+		uint8_t due = 0;
+		uint8_t newest = q[0].step;
+		while(due < len && seq_isDue(q[due].time, now))
 		{
-			//pattern takes main step active and probability into account
-#if 1
-			const uint8_t length = seq_patternSet.length[seq_activePattern][track];
-			const uint8_t currentStep = seq_stepIndex[track];
-			const uint8_t nextStep = (seq_stepIndex[track]+1)%length;
-			const uint8_t prevStep = seq_stepIndex[track] != 0 ? seq_stepIndex[track] - 1 : length-1;
-
-			/* we have 3 possible step sources:
-			 * - flammed AND positive shifted notes from the previous step
-			 * - current step data
-			 * - negative shifted data from the next step
-			 */
-			uint32_t currentStepPattern = seq_getShiftFlamPattern(track, currentStep, STEP_CURRENT);
-			uint32_t nextStepPattern 	= seq_getShiftFlamPattern(track, nextStep, STEP_NEXT);
-			uint32_t prevStepPattern 	= seq_getShiftFlamPattern(track, prevStep, STEP_PREV);
-
-			//calc priotity (next > current > prev)
-			uint8_t prevActive 		= (prevStepPattern 		& (1UL<<(23-idx)) ) != 0;
-			uint8_t currentActive 	= (currentStepPattern 	& (1UL<<(23-idx)) ) != 0;
-			uint8_t nextActive 		= (nextStepPattern 		& (1UL<<(23-idx)) ) != 0;
-
-			if(nextActive)
+			if((int8_t)(q[due].step - newest) > 0)
+				newest = q[due].step;
+			due++;
+		}
+		uint8_t cut = 0;
+		const uint8_t muted = (seq_mutedTracks & (1<<track)) != 0;
+		{
+			for(uint8_t i=0;i<due;i++)
 			{
-				lastWasNoteOn[track] = 1;
-				chokeNext = 1;
-				const uint8_t vol = seq_patternSet.seq_subStepPattern[seq_activePattern][track][nextStep].volume&STEP_VOLUME_MASK;
-				const uint8_t note = seq_arpNote(track, nextStep, STEP_NEXT, idx);
-				seq_triggerVoice(track,vol,note);
+				//(rolls also play on muted tracks, as in stock)
+				if(q[i].step != newest || (muted && !(q[i].flags & SEQ_HIT_ROLL)))
+					continue;
+				seq_triggerVoice(track, q[i].vol, q[i].note);
+				if(!(q[i].flags & SEQ_HIT_ROLL))
+					lastWasNoteOn[track] = 1;
+				seq_firedSinceTick |= (uint8_t)(1<<track);
+				//a newer step's note ends the repeats of older steps
+				if((q[i].flags & (SEQ_HIT_FIRST|SEQ_HIT_ROLL)) == SEQ_HIT_FIRST)
+					cut = 1;
 			}
-			else if((currentActive) && (chokeNext == 0))
-			{
-				lastWasNoteOn[track] = 1;
-				chokeCurrent = 1;
-				const uint8_t vol = seq_patternSet.seq_subStepPattern[seq_activePattern][track][currentStep].volume&STEP_VOLUME_MASK;
-				const uint8_t note = seq_arpNote(track, currentStep, STEP_CURRENT, idx);
-				seq_triggerVoice(track,vol,note);
-			}
-			else if((prevActive) && (chokeNext == 0) && (chokeCurrent == 0))
-			{
-				lastWasNoteOn[track] = 1;
-				const uint8_t vol = seq_patternSet.seq_subStepPattern[seq_activePattern][track][prevStep].volume&STEP_VOLUME_MASK;
-				const uint8_t note = seq_arpNote(track, prevStep, STEP_PREV, idx);
-				seq_triggerVoice(track,vol,note);
-			}
-			else if (lastWasNoteOn[track])
-			{
-				lastWasNoteOn[track] = 0;
-				voiceControl_noteOff(track);
-			}
-#else
-
-			//if main step is active
-			if(seq_intIsMainStepActive(track,seq_stepIndex[track],seq_activePattern))
-			{
-
-
-				if( (seq_rndValue[track]) <= seq_patternSet.seq_subStepPattern[seq_activePattern][track][seq_stepIndex[track]].prob )
-				{
-					/* to be able to process flam and shift simultaneously
-					   we have to look at the current and the next step
-					   as a negative shifted step will be played at the previous step
-					   (including a wrap around at the track length end)
-					   */
-
-
-
-					uint8_t flamCurrentStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][seq_stepIndex[track]]+1;
-					uint8_t length = patternSet->length[seq_activePattern][track];
-					uint8_t flamNextStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][(seq_stepIndex[track]+1)%length]+1;
-					uint8_t shift = 0;
-					switch(flamCurrentStep)
-					{
-					default:
-						break;
-
-					case 5:
-						flamCurrentStep = 6;
-						break;
-
-					case 6:
-						flamCurrentStep=8;
-						break;
-
-					case 7:
-					case 8:
-					case 9:
-					case 10:
-					case 11:
-					case 12:
-					case 13:
-					case 14:
-						shift = flamCurrentStep - 6;
-						break;
-					}
-					if(flamCurrentStep<=1) continue;
-
-
-					if(shift != 0)
-					{
-						// ######## SHIFT #######
-						if(idx == shift*3)
-						{
-							const uint8_t vol = seq_patternSet.seq_subStepPattern[seq_activePattern][i][seq_stepIndex[i]].volume&STEP_VOLUME_MASK;
-							const uint8_t note = seq_patternSet.seq_subStepPattern[seq_activePattern][track][seq_stepIndex[track]].note;
-							seq_triggerVoice(track,vol,note);
-						}
-
-					}
-					else
-					{
-						// ######## FLAM ########
-						// idx value 0 to 24
-						// 24 /3 = 8
-						uint8_t div = 24/flam;
-						//if(idx%(8/flamCurrentStep)==0)
-						if(idx%(div)==0)
-						{
-							const uint8_t vol = seq_patternSet.seq_subStepPattern[seq_activePattern][i][seq_stepIndex[i]].volume&STEP_VOLUME_MASK;
-							const uint8_t note = seq_patternSet.seq_subStepPattern[seq_activePattern][i][seq_stepIndex[i]].note;
-							seq_triggerVoice(i,vol,note);
-						}
-					}
-				}
-			}
-#endif
+		}
+		uint8_t kept = 0;
+		for(uint8_t i=due;i<len;i++)
+		{
+			if(cut && !(q[i].flags & SEQ_HIT_FIRST) && (int8_t)(q[i].step - newest) < 0)
+				continue;
+			q[kept++] = q[i];
+		}
+		seq_queueLen[track] = kept;
+	}
+}
+//------------------------------------------------------------------------------
+//MIDI note off of a track whose last tick had a hit and this one hasn't (stock: notes are one
+//tick long)
+static void seq_tickNoteOffs(void)
+{
+	if(!seq_running)
+		return;
+	for(uint8_t track=0;track<NUM_TRACKS;track++)
+	{
+		if(seq_stepIndex[track] < 0 || (seq_mutedTracks & (1<<track)))
+			continue;
+		if(!(seq_firedSinceTick & (1<<track)) && lastWasNoteOn[track])
+		{
+			lastWasNoteOn[track] = 0;
+			voiceControl_noteOff(track);
+		}
+	}
+	seq_firedSinceTick = 0;
+}
+//------------------------------------------------------------------------------
+//the step after step on a track (each track has its own length)
+SEQ_NOT_INLINED static uint8_t seq_nextTrackStep(const uint8_t track, const uint8_t step)
+{
+	uint8_t len = seq_patternSet.length[seq_activePattern][track];
+	if(!len)
+		len = 16;
+	uint8_t next = (uint8_t)(step + 1);
+	if(next >= len || (next & 0x3f) == 0)
+		next = 0;
+	return next;
+}
+//------------------------------------------------------------------------------
+//does the next step start the pattern again (the longest track ends)? (as in seq_nextStep)
+SEQ_NOT_INLINED static uint8_t seq_nextIsPatternStart(void)
+{
+	const uint8_t longest = seq_getLongestTrack();
+	uint8_t len = seq_patternSet.length[seq_activePattern][longest];
+	if(!len)
+		len = 16;
+	const uint8_t next = (uint8_t)(seq_stepIndex[longest] + 1);
+	return ((next & 0x3f) == 0) || next >= len;
+}
+//------------------------------------------------------------------------------
+//the pattern the next step plays in: at the end of the pattern a queued change or the song's
+//next pattern (>= MAX_PATTERN: the song ends there)
+SEQ_NOT_INLINED static uint8_t seq_lookaheadPattern(void)
+{
+	if(!seq_nextIsPatternStart())
+		return seq_activePattern;
+	if(seq_activePattern != seq_pendingPattern || seq_loadPendigFlag)
+		return seq_pendingPattern;
+	uint8_t p = seq_determineNextPattern(0);
+	if(p == SONG_LOOP)
+		p = seq_activeSong[0];
+	return p;
+}
+//------------------------------------------------------------------------------
+//queue the notes of the step that just started: each track's step (unless it plays early and
+//was queued one step ahead), and the track's next step if that one plays early (negative
+//micro-shift)
+SEQ_NOT_INLINED static void seq_queueStepNotes(void)
+{
+	const uint8_t primed = seq_queuePrimed;
+	seq_queuePrimed = 1;
+	const uint8_t nextPattern = seq_lookaheadPattern();
+	const float stepLength = 24.f*seq_tickLength();
+	for(uint8_t t=0;t<NUM_TRACKS;t++)
+	{
+		const int8_t step = seq_stepIndex[t];
+		if(step < 0)
+			continue;
+		//(right after start nothing was queued ahead)
+		if(!primed || !seq_isEarlyStep(t, (uint8_t)step, seq_activePattern))
+			seq_enqueueStep(t, (uint8_t)step, seq_activePattern, seq_masterStepCnt, seq_rndValue[t].current, 0);
+		if(nextPattern < MAX_PATTERN)
+		{
+			const uint8_t next = nextPattern != seq_activePattern || seq_nextIsPatternStart() ? 0 : seq_nextTrackStep(t, (uint8_t)step);
+			if(seq_isEarlyStep(t, next, nextPattern))
+				seq_enqueueStep(t, next, nextPattern, (uint8_t)(seq_masterStepCnt+1), seq_rndValue[t].next, stepLength);
 		}
 	}
 }
-
+//------------------------------------------------------------------------------
+//everything a tick does after seq_nextStep(): clock output, notes, MIDI clock
+static void seq_processTick(const uint8_t sendMidiClock)
+{
+	if(seq_isRunning())
+		seq_clockOut(seq_prescaleCounter, 0);
+	seq_firePending();
+	seq_tickNoteOffs();
+	if(sendMidiClock && (seq_prescaleCounter%MIDI_PRESCALER_MASK) == 0)
+		seq_clockOut(seq_prescaleCounter, 1);
+}
+//------------------------------------------------------------------------------
 void seq_MidiSyncQueue(uint8_t cnt)
 {
 
@@ -1334,10 +1250,9 @@ void seq_MidiSyncQueue(uint8_t cnt)
 
 
 
-	//seq_calcDeltaT(seq_tempo, isStepShuffled);
 	if(seq_tempo !=0)
 	{
-		seq_calcDeltaT(seq_tempo, 0);
+		seq_calcDeltaT(seq_tempo);
 	}
 
 }
@@ -1352,7 +1267,8 @@ IN_ITCM_RAM void seq_nextStep()
 		return;
 
 	seq_masterStepCnt++;
-	seq_stepStartTime = systick_ticks;
+	//the exact time of this step on the straight grid (its tick may be handled a little late)
+	seq_stepGrid = seq_now() - (uint32_t)(int32_t)(seq_tickLateness*SEQ_TIME_SCALE + 0.5f);
 
 	//---- calc master step position. max value is 64. also take in regard the pattern length -----
 	// track 0 determines the master step position
@@ -1549,7 +1465,18 @@ IN_ITCM_RAM void seq_nextStep()
 					const uint8_t vol = ROLL_VOLUME;
 
 					const uint8_t note = seq_patternSet.seq_subStepPattern[seq_activePattern][i][seq_stepIndex[i]].note;
-					seq_triggerVoice(i,vol,note);
+					//on a swung step with the step's swing (the clock doesn't stretch any more)
+					const float swing = seq_swingDelay((uint8_t)i, seq_masterStepCnt);
+					if(swing <= 0)
+					{
+						seq_triggerVoice(i,vol,note);
+					}
+					else
+					{
+						const SeqHit hit = { seq_stepGrid + (uint32_t)seq_toTime(swing), seq_masterStepCnt,
+								SEQ_HIT_FIRST|SEQ_HIT_ROLL, vol, note };
+						seq_queueInsert((uint8_t)i, &hit);
+					}
 
 					seq_addNote(i,vol, note); // todo should this be note or should it be SEQ_DEFAULT_NOTE (before my change it would have been SEQ_DEFAULT_NOTE)
 				}
@@ -1558,6 +1485,11 @@ IN_ITCM_RAM void seq_nextStep()
 	}//end oneshot
 
 }
+	seq_queueStepNotes();
+	//following an external clock the step arrives in the middle of a block: its hits sound now
+	if(seq_getExtSync())
+		seq_firePending();
+
 	//TODO can maybe be combined with pattern change follow above?!
 	//step display follows bars
 	if(activeParameters[PAR_FOLLOW] & FOLLOW_BAR ) {
@@ -1736,134 +1668,42 @@ void seq_resetDeltaAndTick()
 }
 */
 //------------------------------------------------------------------------------
-//returns how many % [0:99] of the current step have elapsed (time to next step)
-// used for MIDI recording quantisation.
-// if current step is elapsed more than 50%, record step to next step
-float seq_getElapsedStepTimePercent()
-{
-		// not really exact, but close enough for the midi record purpose
-		return seq_prescaleCounter / 23.f * 100.f;
-}
-//------------------------------------------------------------------------------
 /** call periodically to check if the next step has to be processed */
 
 /*IN_ITCM_RAM*/ void seq_tick()
 {
-
-
-
 	if(seq_getExtSync())
 	{
-
-		if(sync_delayedStepTimer != 0)
+#if !HANDLE_SEQ_IN_CLOCK_INTERRUPT
+		//analog clock: every pulse starts a step, on time (swing is in the note times)
+		while(trigger_clockReceived != 0)
 		{
-			if(systick_ticks >= sync_delayedStepTimer)
-			{
-				sync_delayedStepTimer = 0;
-				seq_nextStep();
-				seq_prescaleCounter=0;
+			trigger_clockReceived--;
+			seq_nextStep();
+			seq_prescaleCounter=0;
+			seq_MidiSyncQueue(0);
+		}
 
-				seq_MidiSyncQueue(0);
+		//the internal clock fills in the 24 ticks between the external steps (and waits after
+		//the 24th for the next external step)
+		if(systick_ticks-seq_lastTick >= seq_deltaT)
+		{
+			const float rest = systick_ticks-seq_lastTick - seq_deltaT;
+			seq_lastTick = systick_ticks;
+			if(seq_tempo !=0)
+			{
+				seq_calcDeltaT(seq_tempo);
+			}
+			seq_deltaT = seq_deltaT - rest;
+
+			if(seq_prescaleCounter!=24)
+			{
+				seq_tickLateness = rest;
+				seq_processTick(0);		//no MIDI clock out while following an external clock
+				seq_tickLateness = 0;
+				seq_prescaleCounter++;
 			}
 		}
-#if !HANDLE_SEQ_IN_CLOCK_INTERRUPT
-			while(trigger_clockReceived != 0) //analogue clock
-			{
-				trigger_clockReceived--;
-
-				//trigger_prescalerClockInput
-				//seq_nextStep();
-
-					uint8_t isStepShuffled = seq_getMasterStepCnt()%2 == 1;
-
-					if(isStepShuffled)
-					{
-						float dt = seq_getDeltaTShuffleDelay(seq_getBpm());
-						sync_delayedStepTimer = systick_ticks + dt;
-					}
-					else
-					{
-						seq_nextStep();
-						//seq_MidiSyncQueue(0);
-						seq_prescaleCounter=0;
-						seq_MidiSyncQueue(0);
-					}
-
-
-				//reset internal clock cycle for next step
-				//seq_prescaleCounter=0;
-			}
-
-			//midi clock flam stuff
-			if(systick_ticks-seq_lastTick >= seq_deltaT)
-			{
-
-
-				float rest = systick_ticks-seq_lastTick - seq_deltaT;
-				seq_lastTick = systick_ticks;
-
-
-
-				//seq_calcDeltaT(seq_tempo, isStepShuffled);
-				if(seq_tempo !=0)
-				{
-					seq_calcDeltaT(seq_tempo, 0);
-				}
-				//isStepShuffled = 0;
-				seq_deltaT = seq_deltaT - rest;
-
-				//do not autorun, internal clock used to upscale 24ppq MIDI clock for flam processing
-				if(seq_prescaleCounter!=24)
-				{
-
-
-					//if(seq_prescaleCounter==12)
-					if(seq_isRunning()==1)
-					{
-							trigger_clockTick(0, seq_prescaleCounter);
-					}
-
-					//flam
-
-					// if((seq_prescaleCounter%3) == 0)
-					 {
-							seq_processFlam(seq_prescaleCounter);
-					 }
-
-					//seq_processFlam(seq_prescaleCounter);
-
-					seq_prescaleCounter++;
-					/*
-					if(seq_prescaleCounter==23)
-					{
-						isStepShuffled = seq_masterStepCnt%2 == 1;
-					}*/
-					if(seq_prescaleCounter>=24)
-					{
-						//reset is done by midi or analogue clock
-						//seq_prescaleCounter=0;
-
-
-					}
-				}
-			}
-
-			//TODO this has to be properly implemented once the clock in ppq prescaler is implemented as well
-			//should work the same way as the midi implementation with uscaling the clock accordingly
-			/*
-			if(seq_prescaleCounter==12)
-			{
-					trigger_clockTick(0);
-			}
-
-			//flam
-			 if((seq_prescaleCounter%3) == 0)
-			 {
-					seq_processFlam(seq_prescaleCounter/3);
-			 }
-			 */
-
-
 #endif
 	}
 	else
@@ -1878,86 +1718,33 @@ float seq_getElapsedStepTimePercent()
 
 		if(systick_ticks-seq_lastTick >= seq_deltaT)
 		{
-
-			float rest = systick_ticks-seq_lastTick - seq_deltaT;
+			const float rest = systick_ticks-seq_lastTick - seq_deltaT;
 #if CPU_METER
 			if(seq_isRunning())
 				cpuMeter_seqTickLate(rest);
 #endif
 			seq_lastTick = systick_ticks;
-
-
-
-			seq_calcDeltaT(seq_tempo, isStepShuffled);
-			isStepShuffled = 0;
+			seq_calcDeltaT(seq_tempo);
 			seq_deltaT = seq_deltaT - rest;
 
-
-
-			//if((seq_prescaleCounter%SEQ_PRESCALER_MASK) == 0)
+			seq_tickLateness = rest;
 			if(seq_prescaleCounter == 0)
 			{
-
-
-				if(seq_getExtSync()) {
-
-					//MIDI sync is handled directly from clockSync.c functions
-
-	#if 0
-					//for external sync we have a ratio of 3/4 ppq/steps
-					//so when the 3rd ppq is received we have to activate the 4th step etc
-					//advance only 2 steps automatically, then wait for sync message
-					if(seq_isNextStepSyncStep()==0) {
-						seq_delayedSyncStepFlag = 0;
-
-						seq_nextStep();
-
-					}
-	#endif
-				} else {
-				//	seq_flamCnt = 0;
-					seq_nextStep();
-				}
+				seq_nextStep();
 			}
+			seq_processTick(1);
+			seq_tickLateness = 0;
 
-
-
-			//else if(seq_prescaleCounter==12)
-			if(seq_isRunning())
-			{
-					trigger_clockTick(0, seq_prescaleCounter);
-			}
-
-			//flam
-
-			// if((seq_prescaleCounter%3) == 0)
-			 {
-					seq_processFlam(seq_prescaleCounter);
-			 }
-
-			//seq_processFlam(seq_prescaleCounter);
-
-			if(!seq_getExtSync()) //only send internal MIDI clock to output when external sync is off
-			{
-				if((seq_prescaleCounter%MIDI_PRESCALER_MASK) == 0)
-				{
-					seq_sendRealtime(MIDI_CLOCK);
-				}
-			}
 			seq_prescaleCounter++;
-			if(seq_prescaleCounter==23)
-			{
-				isStepShuffled = seq_masterStepCnt%2 == 1;
-			}
 			if(seq_prescaleCounter>=24)
 			{
 				seq_prescaleCounter=0;
-
-
 			}
 		}
 	}
 
+	//the hits between the ticks (swing, micro-shift)
+	seq_firePending();
 }
 
 //------------------------------------------------------------------------------
@@ -2033,7 +1820,8 @@ void seq_resetPosition()
 	*/
 
 	//reset song position bar counter
-	seq_lastShuffle = 0;
+	seq_queueClear();
+	seq_stepGrid = seq_now();
 //	seq_barCounter = 0;
 	seq_masterStepCnt = 0;
 	seq_songPositionPointer = -1;
@@ -2072,6 +1860,8 @@ void seq_setRunning(uint8_t isRunning)
 
 		trigger_clockReceived = 0;
 		seq_prescaleCounter = 0;
+		seq_queueClear();
+		seq_stepGrid = seq_now();
 		seq_sendRealtime(MIDI_START);
 		trigger_reset(1);
 	}
@@ -2479,21 +2269,20 @@ PatternSet* get_seq_patternSet_p(void)
 }
 
 //------------------------------------------------------------------------
-//live recording: is a hit now nearer to the next step than to the current one?
-//The steps start on the swung grid: a swung 16th (even seq_masterStepCnt) starts by the
-//swing delay late, so the gap after a straight step is longer by it and the gap after a
-//swung step shorter. Measured from the time the current step started, so it also works
-//with an external clock. (The stock seq_getElapsedStepTimePercent() read the tick
-//counter, which wraps to 0 % in the last tick of a step, before the next step starts:
-//hits played slightly early were recorded one step too early.)
-static uint8_t seq_isHitNearerNextStep(void)
+//live recording: is a hit now nearer to the next step than to the current one? The steps start
+//on the straight grid; a step is heard at its start plus its swing delay, so the boundary is the
+//middle between the current and the next step's swung position. (The stock
+//seq_getElapsedStepTimePercent() read the tick counter, which wraps to 0 % in the last tick of a
+//step, before the next step starts: hits played slightly early were recorded one step too early.)
+static uint8_t seq_isHitNearerNextStep(const uint8_t trackNr)
 {
-	if(seq_tempo == 0) return 0;
-	const float tick = (1000*60.f)/seq_tempo/96.f*4.f;	//system ticks (0.25 ms) per 96 ppq tick
-	const float swing = seq_shuffle*16.f*tick;
-	const uint8_t currentIsSwung = (seq_masterStepCnt%2) == 0;
-	const float gap = 24.f*tick + (currentIsSwung ? -swing : swing);
-	return (float)(systick_ticks - seq_stepStartTime) >= gap/2.f;
+	//after start, before the first step: the first step is the only one
+	if(seq_stepIndex[trackNr] < 0)
+		return 1;
+	const float current = seq_swingDelay(0, seq_masterStepCnt);
+	const float next = 24.f*seq_tickLength() + seq_swingDelay(0, (uint8_t)(seq_masterStepCnt+1));
+	const float elapsed = (float)(int32_t)(seq_now() - seq_stepGrid) / SEQ_TIME_SCALE;
+	return elapsed >= (current + next)/2.f;
 }
 //------------------------------------------------------------------------
 void seq_addNote(uint8_t trackNr,uint8_t vel, uint8_t note)
@@ -2506,7 +2295,7 @@ void seq_addNote(uint8_t trackNr,uint8_t vel, uint8_t note)
 		//const int8_t quantizedStep = seq_quantize(seq_stepIndex[trackNr]);
 
 		uint8_t step = seq_stepIndex[trackNr];
-		int8_t quantizedStep = seq_isHitNearerNextStep() ? seq_stepIndex[trackNr] + 1 : seq_stepIndex[trackNr];
+		int8_t quantizedStep = seq_isHitNearerNextStep(trackNr) ? seq_stepIndex[trackNr] + 1 : seq_stepIndex[trackNr];
 
 
 

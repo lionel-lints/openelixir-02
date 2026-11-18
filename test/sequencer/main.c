@@ -28,6 +28,9 @@ extern volatile uint32_t systick_ticks;
 extern uint8_t trigger_clockReceived;
 void seq_tick(void);
 void seq_sync(void);
+//weak: the harness also runs on the stock sequencer (the reference timelines in golden-stock/)
+extern void seq_setClockSwing(uint8_t on) __attribute__((weak));
+extern uint16_t seq_queueDropped __attribute__((weak));
 
 //------------------------------------------------------------------ timeline
 static FILE* out;
@@ -113,19 +116,63 @@ static void eventRoll(int step, int tick)
 	if(step == 21 && tick == 10) seq_setRoll(1, 0);
 }
 
-//live recording on track 2, played like a person: steps 2-15, each hit at the step's
-//(swung) position plus recordOffsetMs (early, on time, late). Hits arrive like MIDI notes,
-//after seq_tick() in the block that reaches them; each is reported with its intended step.
-static int recordOffsetMs;
+//live recording on track 2, played like a person. Hits arrive like MIDI notes, after seq_tick()
+//in the block that reaches them; each is reported with the step it is meant for (HIT).
+//  _early/_late:  steps 2-15 at their (swung) position -3 ms / +3 ms
+//  _midlo/_midhi: 2 ms before / after the middle between steps n and n+1 (n = 2-15): meant
+//                 for n / n+1 (n+1 = 16 wraps to step 1 of the next loop)
+//  _start:        one hit 1 ms after start: meant for the first step
 static void eventRecord(int step, int tick)
 {
 	if(step == 0 && tick == 0) seq_setRecordingMode(1);
 	(void)tick;
 }
-static double recordHitTime(const double step_s, const uint8_t swing, const int step)
+#define MAX_HITS 20
+static double hitTime[MAX_HITS];
+static int hitStep[MAX_HITS], numHits;
+static void planHits(const char* name, const double step_s, const uint8_t swing)
 {
-	const double late = (step & 1) ? swing / 127.0 * 16.0 * step_s / 24.0 : 0.0;
-	return step * step_s + late + recordOffsetMs / 1000.0;
+	const double late = swing / 127.0 * 16.0 * step_s / 24.0;
+	#define POS(n) ((n) * step_s + (((n) & 1) ? late : 0.0))
+	numHits = 0;
+	if(strstr(name, "_start")) { hitTime[0] = 0.001; hitStep[0] = 0; numHits = 1; return; }
+	for(int n = 2; n < 16; n++)
+	{
+		const double mid = (POS(n) + POS(n + 1)) / 2.0;
+		if(strstr(name, "_early"))      { hitTime[numHits] = POS(n) - 0.003; hitStep[numHits] = n; }
+		else if(strstr(name, "_late"))  { hitTime[numHits] = POS(n) + 0.003; hitStep[numHits] = n; }
+		else if(strstr(name, "_midlo")) { hitTime[numHits] = mid - 0.002;    hitStep[numHits] = n; }
+		else                            { hitTime[numHits] = mid + 0.002;    hitStep[numHits] = (n + 1) % 16; }
+		numHits++;
+	}
+	#undef POS
+}
+
+//stop in the middle of a bar (step 9, tick 7) and start again (step 13 in the old count)
+static void eventStopStart(int step, int tick)
+{
+	if(step == 9 && tick == 7) { seq_setRunning(0); seq_resetPosition(); timeline_event("STOP", -1, -1, -1); }
+	if(step == 13 && tick == 0) { seq_setRunning(1); timeline_event("START", -1, -1, -1); }
+}
+
+//external clock pulse times: steady, jittered (+-1 ms, deterministic) or a tempo ramp (to +25 %)
+#define MAX_PULSES 1200
+static double pulseTime[MAX_PULSES];
+static void planPulses(const char* name, const int ppStep, const int steps, const uint16_t bpm)
+{
+	const int n = ppStep * (steps + 3) < MAX_PULSES ? ppStep * (steps + 3) : MAX_PULSES;
+	double t = 0;
+	for(int k = 0; k < n; k++)
+	{
+		double b = bpm;
+		if(strstr(name, "_ramp")) b = bpm * (1.0 + 0.25 * k / (double)(ppStep * steps));
+		const double period = 60.0 / b / 4.0 / ppStep;
+		double jitter = 0;
+		if(strstr(name, "_jitter") && k > 0) jitter = ((k * 7919) % 11 - 5) * 0.0002;
+		pulseTime[k] = t + jitter;
+		t += period;
+	}
+	for(int k = n; k < MAX_PULSES; k++) pulseTime[k] = 1e9;
 }
 static void dumpRecorded(void)
 {
@@ -157,6 +204,7 @@ static Scenario scenarios[] =
 	S("roll5_16_swing064",     120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
 	S("midiclock_swing000",    120,   0, CLOCK_MIDI,     32, patternTiming,    NULL),
 	S("midiclock_swing064",    120,  64, CLOCK_MIDI,     32, patternTiming,    NULL),
+	S("analogclock_swing000",  120,   0, CLOCK_ANALOG,   32, patternTiming,    NULL),
 	S("analogclock_swing064",  120,  64, CLOCK_ANALOG,   32, patternTiming,    NULL),
 	S("record_swing000_early", 120,   0, CLOCK_INTERNAL, 20, NULL,             eventRecord),
 	S("record_swing000_late",  120,   0, CLOCK_INTERNAL, 20, NULL,             eventRecord),
@@ -166,10 +214,50 @@ static Scenario scenarios[] =
 	S("record_swing096_late",  120,  96, CLOCK_INTERNAL, 20, NULL,             eventRecord),
 	S("record_midiclock_swing064_early", 120, 64, CLOCK_MIDI, 20, NULL,       eventRecord),
 	S("record_midiclock_swing064_late",  120, 64, CLOCK_MIDI, 20, NULL,       eventRecord),
+	S("record_swing000_midlo", 120,   0, CLOCK_INTERNAL, 20, NULL,             eventRecord),
+	S("record_swing000_midhi", 120,   0, CLOCK_INTERNAL, 20, NULL,             eventRecord),
+	S("record_swing064_midlo", 120,  64, CLOCK_INTERNAL, 20, NULL,             eventRecord),
+	S("record_swing064_midhi", 120,  64, CLOCK_INTERNAL, 20, NULL,             eventRecord),
+	S("record_swing096_midhi", 120,  96, CLOCK_INTERNAL, 20, NULL,             eventRecord),
+	S("record_swing064_start", 120,  64, CLOCK_INTERNAL, 20, NULL,             eventRecord),
+	S("midiclock_jitter_swing064", 120, 64, CLOCK_MIDI,  32, patternTiming,    NULL),
+	S("midiclock_ramp_swing064",   120, 64, CLOCK_MIDI,  32, patternTiming,    NULL),
+	S("analogclock_jitter_swing064", 120, 64, CLOCK_ANALOG, 32, patternTiming, NULL),
+	S("stopstart_swing064",    120,  64, CLOCK_INTERNAL, 32, patternTiming,    eventStopStart),
+	//swing mode Clk (name ending in _clk): the clock outputs swing along, the notes are the same
+	S("swing064_150_clk",      150,  64, CLOCK_INTERNAL, 32, patternTiming,    NULL),
+	S("swing127_150_clk",      150, 127, CLOCK_INTERNAL, 32, patternTiming,    NULL),
+	S("roll5_16_swing064_clk", 120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("midiclock_swing064_clk",120,  64, CLOCK_MIDI,     32, patternTiming,    NULL),
+	S("analogclock_swing064_clk",120,64, CLOCK_ANALOG,   32, patternTiming,    NULL),
 };
 #define NUM_SCENARIOS (int)(sizeof(scenarios) / sizeof(scenarios[0]))
 
 //------------------------------------------------------------------ run
+//the scenario at the top of its timeline, for test/sequencer/check.py: settings, the active
+//steps with their flam and shift, track lengths, events
+static void writeHeader(const Scenario* sc)
+{
+	static const char* const clocks[] = { "internal", "midi", "analog" };
+	fprintf(out, "# scenario %s bpm %u swing %u clock %s clockswing %d steps %d block %.12f systick %.12f\n",
+			sc->name, sc->bpm, sc->swing, clocks[sc->clock], strstr(sc->name, "_clk") != NULL, sc->steps,
+			BLOCK_S, SYSTICK_S);
+	for(int p = 0; p < 2; p++)
+		for(int t = 0; t < NUM_TRACKS; t++)
+		{
+			const uint8_t len = seq_patternSet.length[p][t];
+			fprintf(out, "# length %d %d %d\n", p, t, len ? len : 16);
+			for(int st = 0; st < NUM_STEPS; st++)
+				if(seq_isMainStepActive(t, st, p))
+					fprintf(out, "# step %d %d %d %d %d\n", p, t, st, seq_patternSet.seq_stepTiming[p][t][st].flam,
+							seq_patternSet.seq_stepTiming[p][t][st].shift - 7);
+		}
+	if(sc->event == eventPatternChange) fprintf(out, "# patternchange queued 6 pattern 1 shuffle %u\n", seq_patternSet.shuffle[1]);
+	if(sc->event == eventRoll) fprintf(out, "# roll track 1 rate %d on 2 10 off 21 10\n", rollRate);
+	if(sc->event == eventRecord) fprintf(out, "# record\n");
+	if(sc->event == eventStopStart) fprintf(out, "# stopstart\n");
+}
+
 static void run(const Scenario* sc)
 {
 	const double step_s = 60.0 / sc->bpm / 4.0;
@@ -180,12 +268,14 @@ static void run(const Scenario* sc)
 	seq_setBpm(sc->bpm);
 	seq_setShuffle(sc->swing / 127.f);
 	if(sc->pattern) sc->pattern();
-	//recording: 3 ms early or 3 ms late
-	if(sc->event == eventRecord) recordOffsetMs = strstr(sc->name, "_early") ? -3 : 3;
-	int nextHitStep = 2;
+	if(strstr(sc->name, "_clk") && seq_setClockSwing) seq_setClockSwing(1);
+	if(sc->event == eventRoll) rollRate = sc->name[4] - '0';	//roll<rate>_...
+	writeHeader(sc);
+	if(sc->event == eventRecord) planHits(sc->name, step_s, sc->swing);
+	int nextHit = 0;
 
 	//external clock: MIDI 24 ppq, analog one pulse per 16th; both start at time 0
-	const double ext_period = sc->clock == CLOCK_MIDI ? step_s / 6.0 : step_s;
+	planPulses(sc->name, sc->clock == CLOCK_MIDI ? 6 : 1, sc->steps, sc->bpm);
 	long ext_count = 0;
 	if(sc->clock != CLOCK_INTERNAL)
 	{
@@ -216,22 +306,24 @@ static void run(const Scenario* sc)
 		seq_tick();
 
 		//recorded hits arrive like MIDI notes: after seq_tick()
-		while(sc->event == eventRecord && nextHitStep < 16 && recordHitTime(step_s, sc->swing, nextHitStep) <= t)
+		while(sc->event == eventRecord && nextHit < numHits && hitTime[nextHit] <= t)
 		{
-			timeline_event("HIT", nextHitStep, -1, -1);
+			timeline_event("HIT", hitStep[nextHit], -1, -1);
 			seq_addNote(2, 100, 60);
-			nextHitStep++;
+			nextHit++;
 		}
 
 		//received in the same interrupt, after seq_tick()
-		while(sc->clock != CLOCK_INTERNAL && ext_count * ext_period <= t)
+		while(sc->clock != CLOCK_INTERNAL && ext_count < MAX_PULSES && pulseTime[ext_count] <= t)
 		{
+			timeline_event("EXT", (int)ext_count, -1, -1);
 			if(sc->clock == CLOCK_MIDI) seq_sync();
 			else trigger_clockReceived++;
 			ext_count++;
 		}
 	}
 	if(sc->event == eventRecord) dumpRecorded();
+	if(&seq_queueDropped) timeline_event("DROPPED", seq_queueDropped, -1, -1);
 }
 
 int main(int argc, char** argv)

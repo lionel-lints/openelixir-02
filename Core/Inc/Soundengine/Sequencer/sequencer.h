@@ -207,17 +207,18 @@ uint8_t seq_isAutomationStepArmed();
 //------------------------------------------------------------------------------
 void seq_nextStep();
 //------------------------------------------------------------------------------
-void seq_processFlam(uint8_t idx);
 //------------------------------------------------------------------------------
 void seq_triggerVoice(uint8_t voiceNr, uint8_t vol, uint8_t note);
 //------------------------------------------------------------------------------
 void seq_setShuffle(float shuffle);
+//0: the clock outputs (MIDI clock, clock jacks) run straight, 1: they swing like the notes
+void seq_setClockSwing(uint8_t on);
+extern uint16_t seq_queueDropped;	//hits that didn't fit into a track's queue
 //------------------------------------------------------------------------------
 void seq_setTrackLength(uint8_t trackNr, uint8_t length);
 //------------------------------------------------------------------------------
 uint8_t seq_getTrackLength(uint8_t trackNr);
 //------------------------------------------------------------------------------
-float seq_getDeltaTShuffleDelay(uint16_t bpm);
 //------------------------------------------------------------------------------
 //void seq_setTrackRotation(uint8_t trackNr, const uint8_t rot);
 //------------------------------------------------------------------------------
@@ -227,7 +228,6 @@ float seq_getDeltaTShuffleDelay(uint16_t bpm);
 //------------------------------------------------------------------------------
 void seq_init();
 //------------------------------------------------------------------------------
-float seq_getElapsedStepTimePercent();
 //------------------------------------------------------------------------------
 /** call periodically to check if the next step has to be processed */
 void seq_tick();

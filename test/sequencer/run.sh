@@ -5,6 +5,7 @@
 # Output and build files go to $OUT (default /tmp/seqtime).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/../.." && pwd); OUT=${OUT:-/tmp/seqtime}
+GOLDEN=${GOLDEN:-$HERE/golden}
 SHIM=$ROOT/test/engine/shim
 mkdir -p "$OUT/obj" "$OUT/timelines"
 
@@ -26,11 +27,13 @@ for sc in $("$OUT/seqtime" --list); do
 		if [ "$hits" != "$recs" ]; then echo "WRONG STEPS: $sc played $hits recorded $recs"; fail=1; fi
 	fi
 	if [ $capture = 1 ]; then
-		cp "$OUT/timelines/$sc.txt" "$HERE/golden/$sc.txt"
-	elif ! cmp -s "$OUT/timelines/$sc.txt" "$HERE/golden/$sc.txt"; then
-		echo "DIFFERS: $sc"; diff "$HERE/golden/$sc.txt" "$OUT/timelines/$sc.txt" | head -8 || true; fail=1
+		cp "$OUT/timelines/$sc.txt" "$GOLDEN/$sc.txt"
+	elif ! cmp -s "$OUT/timelines/$sc.txt" "$GOLDEN/$sc.txt"; then
+		echo "DIFFERS: $sc"; diff "$GOLDEN/$sc.txt" "$OUT/timelines/$sc.txt" | head -8 || true; fail=1
 	fi
 done
-if [ $capture = 1 ]; then echo "golden timelines written: $(ls "$HERE/golden" | wc -l)"; exit 0; fi
+if [ $capture = 1 ]; then echo "golden timelines written: $(ls "$GOLDEN" | wc -l)"; exit 0; fi
+#the timing rules of docs/PLAN-note-swing.md, against the stock reference (golden-stock/)
+if [ -d "$HERE/golden-stock" ] && [ -z "${NO_RULES:-}" ]; then python3 "$HERE/check.py" "$OUT/timelines" "$HERE/golden-stock" || fail=1; fi
 [ $fail = 0 ] && echo "sequencer timing: all scenarios match the golden timelines"
 exit $fail

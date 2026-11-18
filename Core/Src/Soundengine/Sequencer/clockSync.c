@@ -22,7 +22,6 @@ uint8_t sync_armed = 0;
 
 uint8_t sync_clockCnt = 0;
 
-uint32_t sync_delayedStepTimer = 0;
 
 
 //---------------------------------------------------------
@@ -46,21 +45,12 @@ void sync_tick()
 	//with the new sequencer without substeps we have classical 4ppq resolution
 	//MIDI clock is 24ppq
 	//so we can simply advance the sequencer every 6 clock pulses
+	//every step starts on time; swing is in the note times
 	if(sync_clockCnt == 0)
 	{
-		uint8_t isStepShuffled = seq_getMasterStepCnt()%2 == 1;
-
-		if(isStepShuffled)
-		{
-			float dt = seq_getDeltaTShuffleDelay(seq_getBpm());
-			sync_delayedStepTimer = systick_ticks + dt;
-		}
-		else
-		{
-			seq_nextStep();
-			seq_prescaleCounter=0;
-			seq_MidiSyncQueue(0);
-		}
+		seq_nextStep();
+		seq_prescaleCounter=0;
+		seq_MidiSyncQueue(0);
 	}
 
 	sync_clockCnt++;
