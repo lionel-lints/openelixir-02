@@ -53,14 +53,14 @@ function(lxr_firmware_executable target)
     )
 endfunction()
 
-# lxr_add_firmware_outputs(<target> [IMAGE_MAGIC <8 chars> IMAGE_NAME <basename>])
+# lxr_add_firmware_outputs(<target> [IMAGE_MAGIC <8 chars> IMAGE_NAME <basename> [MAIN_C <main.c>]])
 #
 # Writes <name>.hex, <name>.bin and, without Python 3, prints the section sizes
 # (with Python 3, lxr_add_memory_report() gives the full picture instead). With IMAGE_MAGIC and
 # Python 3 available it also wraps the .bin into the bootloader's SD-card update
 # image <IMAGE_NAME>.img (see tools/mkimage.py for the format).
 function(lxr_add_firmware_outputs target)
-    cmake_parse_arguments(ARG "" "IMAGE_MAGIC;IMAGE_NAME" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "IMAGE_MAGIC;IMAGE_NAME;MAIN_C" "" ${ARGN})
     lxr_firmware_basename(${target} name)
 
     set(out_dir $<TARGET_FILE_DIR:${target}>)
@@ -86,6 +86,15 @@ function(lxr_add_firmware_outputs target)
 
     if(ARG_IMAGE_MAGIC AND ARG_IMAGE_NAME)
         if(Python3_EXECUTABLE)
+            # the firmware must not be able to touch the bootloader: otherwise no update image
+            # (and an image of an earlier build is deleted), see tools/check_firmware_image.py
+            if(ARG_MAIN_C)
+                list(APPEND commands
+                    COMMAND ${Python3_EXECUTABLE} ${LXR_CMAKE_TOOLS_DIR}/check_firmware_image.py
+                            --objdump ${CMAKE_OBJDUMP} --main-c ${ARG_MAIN_C}
+                            --remove ${out_dir}/${ARG_IMAGE_NAME}.img $<TARGET_FILE:${target}>
+                )
+            endif()
             list(APPEND commands
                 COMMAND ${Python3_EXECUTABLE} ${LXR_CMAKE_TOOLS_DIR}/mkimage.py
                         --magic ${ARG_IMAGE_MAGIC} ${bin} ${out_dir}/${ARG_IMAGE_NAME}.img

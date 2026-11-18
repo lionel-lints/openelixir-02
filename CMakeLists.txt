@@ -109,7 +109,8 @@ set(update_image_name LXR_${PROJECT_NAME}_V${PROJECT_VERSION})
 if(LXR_CPU_METER)
     string(APPEND update_image_name _cpumeter)
 endif()
-lxr_add_firmware_outputs(${PROJECT_NAME} IMAGE_MAGIC LXRV2IMG IMAGE_NAME ${update_image_name})
+lxr_add_firmware_outputs(${PROJECT_NAME} IMAGE_MAGIC LXRV2IMG IMAGE_NAME ${update_image_name}
+    MAIN_C ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/main.c)
 
 # "flash": application only, the bootloader on the device is left alone.
 lxr_add_openocd_flash_target(flash
