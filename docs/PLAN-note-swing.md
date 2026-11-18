@@ -154,7 +154,9 @@ firmware's time model, golden timelines from 1.4.1.
 
 ## Delivery
 
-Commits on `lionel/note-swing` (done: plan, image safety check, harness, recording fix):
+Commits on `lionel/note-swing` (done: plan, image safety check, harness, recording fix, scheduler
+and note swing f4e01fe, rolls bccc50b, docs; also found on the way: Euclid 02f39c0, oscillator
+ae2784c):
 
 1. Scheduler and note swing: queue, enqueue/fire, cut rule, following an external clock, recording
    on the swung grid, clock outputs per `swg`, the `swg` setting; tests for both modes.

@@ -13,9 +13,9 @@ IDs refer to the firmware review by jhw in
   `(i+1) & 1023`) would change the sound of existing kits, so it is not applied. It only reads; no
   memory is overwritten.
 
-- **S-B6: internal shuffle also shuffles the MIDI and analog clock outputs.** The clock outputs come
-  from the same shuffled 96 ppq ticks as the steps, so a device synced to the clock outputs follows
-  the shuffle. Kept as in the stock firmware (decision 2026-10-26).
+- **S-B6: internal shuffle also shuffled the MIDI and analog clock outputs.** Fixed in 2.0: the clock
+  runs straight and swing is in the note times, so the clock outputs are steady. Config "swg" = `Clk`
+  swings them again (evenly spread over a swung step), for gear that should follow the swing.
 
 ## Known limitations
 

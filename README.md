@@ -52,6 +52,17 @@ Details for kits, patterns and engines: [docs/ENGINES.md](docs/ENGINES.md).
 no longer hard-clip. Levels that didn't clip before are unchanged. Config menu "lim" (2nd page)
 switches it off for exactly the stock mix.
 
+**Swing with a steady clock (2.0).** Swing no longer stretches the sequencer clock: the 2nd and 4th
+16th of each beat are scheduled late (exactly where they were before, every swing value), while the
+clock itself runs straight. The MIDI clock out and the clock outputs stay steady at any swing, flams
+and arps on swung steps keep their spacing, and following an external clock (MIDI or analog) no
+notes are dropped and steps start on the clock. Config menu "swg" (2nd page): `Not` (default) =
+clock outputs straight, `Clk` = they swing like the notes, for gear that should swing along.
+
+**Faster rolls (2.0).** Roll speeds on the performance page, slowest to fastest: One, 1/1, 1/2, 1/4,
+1/8, 8T, 16, 16T, 32, 32T, 64 (T = triplet). Rolls are locked to the pattern's grid also on tracks
+of any length; 16 and slower swing with their step, the faster ones stay even.
+
 **DJ filter.** A filter on the final mix of all outputs, on the performance page: `dj` turned left of
 the center is a low-pass (down to 40 Hz), right of it a high-pass (up to 8 kHz), around the center it
 is off; `res` sets the resonance. It isn't saved and starts off; while off, the sound is unchanged.
