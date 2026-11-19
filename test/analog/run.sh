@@ -19,3 +19,4 @@ else
 	echo "FAIL: the port renders differently from AnalogModels"; cmp "$OUT/original.raw" "$OUT/port.raw" || true; exit 1
 fi
 python3 "$HERE/check.py" "$OUT/port.raw"
+python3 "$HERE/check_presets.py" "$HERE" "$ROOT"

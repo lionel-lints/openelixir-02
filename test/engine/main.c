@@ -571,58 +571,441 @@ static int engineTest(void)
 #ifdef HAVE_ENGINE_ANALOG
 #include "menu/analogSetup.h"
 #include "Soundengine/DSPAudio/automationNode.h"
-//Analog engine: every instrument chosen by hand (the UI's setup, menu/analogSetup.c) is played
-//and fades within the amp EG's length (a gate: the instrument has faded to -60 dB when it closes),
-//and a step lock of the instrument plays it on its step only
+#include "Soundengine/DSPAudio/SlopeEg2.h"
+//Analog engine (docs/ENGINES.md): the voice is checked against what its instruments are defined
+//to do (AnalogModels.c), and the UI's setup (menu/analogSetup.c) against its rules
+
+static const char* const anNames[NUM_ANALOG_MODELS] =
+{
+	"BD8", "BD9", "SD8", "SD9", "LT8", "MT8", "HT8", "LT9", "MT9", "HT9", "LC8", "MC8", "HC8",
+	"RS8", "RS9", "CL8", "CP8", "CP9", "MA8", "CB8", "HH8", "HH9", "CY8", "CR9", "RD9",
+	"SRN", "GND", "BNG", "GNG", "DJB", "DJT", "DJS", "CGO", "CGS", "ODK", "NGD", "SHM", "TKR",
+};
+
+//the UI state analogSetup_onParamChanged() looks at (the weak stubs in stubs.c otherwise)
+static int8_t anArmedStep = -1;
+int8_t buttonHandler_getArmedAutomationStep(void) { return anArmedStep; }
+
+#define AN_BLOCK_S		((float)OUTPUT_DMA_SIZE / REAL_FS)
+#define AN_MAX_BLOCKS	9000	//13 s: the longest instrument (gong, 10 s to -60 dB) and 20 % more
+static int16_t anBuf[AN_MAX_BLOCKS * OUTPUT_DMA_SIZE];
+static VoiceSlot anVoice;
+static uint32_t anHash = 2166136261u;	//of everything rendered: compare.sh compares it between trees
+
+static void anTrigger(VoiceSlot* c, uint8_t slot, uint8_t second, uint8_t vel, uint8_t note)
+{
+	Analog_trigger(&c->u.analog, vel, note);
+	if(slot == NUM_VOICE_SLOTS - 1) c->u.c.oscVolEg.decay = c->decay[second];	//as slot_trigger()
+}
+static void anRender(VoiceSlot* c, int16_t* out, int blocks)
+{
+	if(blocks > AN_MAX_BLOCKS)
+	{
+		printf("analog test: %d blocks don't fit\n", blocks);
+		exit(3);
+	}
+	for(int b = 0; b < blocks; b++)
+	{
+		SVF_recalcFreq(&c->u.c.filter);
+		Analog_calcAsync(&c->u.analog);
+		Analog_calcSyncBlock(&c->u.analog, out + b * OUTPUT_DMA_SIZE, OUTPUT_DMA_SIZE);
+		anHash = fnv(out + b * OUTPUT_DMA_SIZE, OUTPUT_DMA_SIZE * sizeof(int16_t)) ^ anHash * 16777619u;
+	}
+}
+//a hit of a copy of the slot's voice, alone, into anBuf
+static void anCapture(uint8_t slot, uint8_t second, uint8_t vel, uint8_t note, int blocks)
+{
+	anVoice = voiceSlots[slot];
+	hwRngState = 0x12345678;
+	anTrigger(&anVoice, slot, second, vel, note);
+	anRender(&anVoice, anBuf, blocks);
+}
+static float anBlockDb(int b)
+{
+	double e = 0;
+	for(int i = 0; i < OUTPUT_DMA_SIZE; i++) e += (double)anBuf[b * OUTPUT_DMA_SIZE + i] * anBuf[b * OUTPUT_DMA_SIZE + i];
+	return 10.f * log10f((float)(e / OUTPUT_DMA_SIZE) + 1e-3f);
+}
+typedef struct { int peakBlock; float peakDb, t60, tau, hz; } AnShape;
+//the level curve of anBuf: -60 dB point (last block within 60 dB of the loudest) and the time
+//constant of the decay between -20 and -50 dB
+static AnShape anShape(int blocks)
+{
+	AnShape s = { 0, -200.f, 0, 0, 0 };
+	for(int b = 0; b < blocks; b++)
+	{
+		const float db = anBlockDb(b);
+		if(db > s.peakDb) { s.peakDb = db; s.peakBlock = b; }
+	}
+	int b20 = -1, b50 = -1, f0 = -1, f1 = -1;
+	for(int b = s.peakBlock; b < blocks; b++)
+	{
+		const float rel = anBlockDb(b) - s.peakDb;
+		if(rel >= -60.f) s.t60 = (b + 1) * AN_BLOCK_S;
+		if(b20 < 0 && rel <= -20.f) b20 = b;
+		if(b50 < 0 && rel <= -50.f) b50 = b;
+		if(f0 < 0 && rel <= -15.f) f0 = b;
+		if(f1 < 0 && rel <= -35.f) f1 = b;
+	}
+	if(b20 >= 0 && b50 > b20)
+		s.tau = (b50 - b20) * AN_BLOCK_S * 8.6859f / 30.f;
+	(void)f1;
+	s.hz = f0;	//the block where the pitch is measured (anPitch)
+	return s;
+}
+//the pitch near expect [Hz]: the strongest autocorrelation for periods of expect/2 .. 2*expect,
+//over 4096 samples from the -15 dB point (after the attack's pitch sweeps, while the tone is
+//well above any noise the instrument adds)
+static float anPitch(const AnShape* s, float expect)
+{
+	const int start = (int)s->hz * OUTPUT_DMA_SIZE, len = 4096;
+	const int lo = (int)(REAL_FS / (2.f * expect)), hi = (int)(REAL_FS / (0.5f * expect));
+	double best = -1e30;
+	int bestLag = lo;
+	static double r[2048];
+	for(int lag = lo; lag <= hi && lag < 2048; lag++)
+	{
+		double acc = 0, e0 = 0, e1 = 0;
+		for(int i = 0; i < len; i++)
+		{
+			const double a = anBuf[start + i], b = anBuf[start + i + lag];
+			acc += a * b; e0 += a * a; e1 += b * b;
+		}
+		r[lag] = acc / sqrt(e0 * e1 + 1e-9);
+		if(r[lag] > best) { best = r[lag]; bestLag = lag; }
+	}
+	//parabolic interpolation between the neighbouring lags
+	double frac = 0;
+	if(bestLag > lo && bestLag < hi && bestLag < 2047)
+	{
+		const double y0 = r[bestLag - 1], y1 = r[bestLag], y2 = r[bestLag + 1];
+		const double d = y0 - 2 * y1 + y2;
+		if(d < 0) frac = 0.5 * (y0 - y2) / d;
+	}
+	return (float)(REAL_FS / (bestLag + frac));
+}
+//the amp EG's length on a slot (the instruments have faded to -60 dB when it ends; at most 10 s)
+static float anEgLength(uint8_t slot, uint8_t second)
+{
+	const float d = slot == NUM_VOICE_SLOTS - 1 ? (float)voiceSlots[slot].decay[second] : (float)voiceSlots[slot].u.c.oscVolEg.decay;
+	const float t = OUTPUT_DMA_SIZE / (d * REAL_FS);
+	return t < 10.f ? t : 10.f;
+}
+//let the mixer run, so that the voices' smoothed settings (volume, fader, drive) have arrived, as
+//on the running device (the voice copies would start their volume from 0 otherwise)
+static void anSettle(void)
+{
+	int peak, nan = 0;
+	renderSound(300, &peak, &nan);
+}
+//choose an instrument like turning the ins knob
+static void anChoose(uint8_t slot, uint8_t ins)
+{
+	const uint16_t par = slot_rolePar[slot][0];
+	sendParam(par, ins);
+	analogSetup_onParamChanged(par, ins);
+	anSettle();
+}
+static int anCheck(int bad, const char* what)
+{
+	if(bad) printf("  FAIL: %s\n", what);
+	return bad;
+}
+
 static int analogTest(void)
 {
 	int fail = 0;
-	const uint8_t slot = 0;
-	const uint16_t par = slot_rolePar[slot][0];
 	kitEngines_setStock(kitEngines);
 	kitEngines_apply();
 	loadKit(0);
-	switchEngine(slot, ENGINE_ANALOG);
-	printf("analog instruments, ms to -60 dB / amp EG length:\n");
+	switchEngine(0, ENGINE_ANALOG);
+	switchEngine(NUM_VOICE_SLOTS - 1, ENGINE_ANALOG);
+
+	//--- switching to the engine: BD8, set up
+	fail |= anCheck(activeParameters[slot_rolePar[0][0]] != MODEL_BD8 || activeParameters[PAR_VOL_SLOPE1] != 127,
+			"a slot switched to analog starts with BD8, set up");
+
+	//--- every instrument chosen by hand
+	printf("instrument  setup  tau set/measured (* checked)  -60 dB at / amp EG end  retrigger: fade start/last sample, after 1.45 ms\n");
 	for(uint8_t ins = 0; ins < NUM_ANALOG_MODELS; ins++)
 	{
-		sendParam(par, ins);
-		analogSetup_onParamChanged(par, ins);
-		static VoiceSlot c;
-		c = voiceSlots[slot];
+		int bad = 0;
+		//something else first, so that the setup has to set every value
+		sendParam(PAR_COARSE1, 70); sendParam(PAR_FINE1, 20); sendParam(PAR_VELOA1, 30); sendParam(PAR_VOL_SLOPE1, 10);
+		sendParam(slot_rolePar[0][1], 90); sendParam(PAR_TRANS1_VOL, 90); sendParam(PAR_DRIVE1, 90); sendParam(PAR_FILTER_TYPE_1, 1);
+		anSettle();
+		anChoose(0, ins);
+		const int setupBad = activeParameters[PAR_COARSE1] != 60 || activeParameters[PAR_FINE1] != 63 || activeParameters[PAR_VELOA1] != 0
+				|| activeParameters[PAR_VOL_SLOPE1] != 127 || activeParameters[slot_rolePar[0][1]] != 0 || activeParameters[PAR_TRANS1_VOL] != 0
+				|| activeParameters[PAR_DRIVE1] != 0 || activeParameters[PAR_FILTER_TYPE_1] != 7
+				|| voiceSlots[0].u.c.oscVolEg.decay != slopeEg2_calcDecay(activeParameters[PAR_VELOD1]);
+		bad |= setupBad;
+
+		//the decay: the instrument falls with the time constant the amp decay sets and is at
+		//-60 dB when the amp EG ends (the amp EG is a gate)
+		const float T = anEgLength(0, 0);
+		const int blocks = (int)(T * 1.2f / AN_BLOCK_S) + 20;	//T is at most 10 s
+		anCapture(0, 0, 127, 60, blocks);
+		const AnShape s = anShape(blocks);
+		const float tauSet = T / 6.9078f;
+		bad |= s.t60 > T * 1.03f + 3 * AN_BLOCK_S || s.t60 < T * 0.25f || anVoice.u.analog.inst.waveform != ins;
+
+		//a retrigger while it rings: the instrument fades the old hit out from the voice's last
+		//sample over about 1.5 ms (the same retrigger rendered without that fade: the difference)
+		anVoice = voiceSlots[0];
 		hwRngState = 0x12345678;
-		voiceTrigger(&c, slot, 0);
-		int len;
-		voiceRender(&c, 3000, &len);
-		const float egMs = OUTPUT_DMA_SIZE * 1000.f / ((float)c.u.c.oscVolEg.decay * REAL_FS);
-		const float ms = len * OUTPUT_DMA_SIZE * 1000.f / REAL_FS;
-		const int bad = c.u.analog.inst.waveform != ins || len == 0 || ms > egMs * 1.1f + 5.f;
-		printf(" %2u:%4.0f/%4.0f%s", ins, ms, egMs, bad ? " FAIL" : "");
-		if(ins % 8 == 7) printf("\n");
+		anTrigger(&anVoice, 0, 0, 127, 60);
+		const int ring = (int)(0.15f * T / AN_BLOCK_S) + 2;
+		anRender(&anVoice, anBuf, ring);
+		const int last = anBuf[ring * OUTPUT_DMA_SIZE - 1];
+		static VoiceSlot noFade;
+		static int16_t noFadeBuf[OUTPUT_DMA_SIZE];
+		noFade = anVoice;
+		noFade.u.analog.inst.model.lastOut = 0.f;
+		anTrigger(&anVoice, 0, 0, 127, 60);
+		anTrigger(&noFade, 0, 0, 127, 60);
+		anRender(&anVoice, anBuf, 1);
+		anRender(&noFade, noFadeBuf, 1);
+		const int fade0 = anBuf[0] - noFadeBuf[0], fadeEnd = anBuf[OUTPUT_DMA_SIZE - 1] - noFadeBuf[OUTPUT_DMA_SIZE - 1];
+		bad |= abs(fade0 - last) > abs(last) / 20 + 64 || abs(fadeEnd) > abs(last) * 45 / 100 + 64;
+
+		//the decay knob sets the time constant of the instruments whose body is one decay
+		static const uint8_t oneDecay[] = { MODEL_BD8, MODEL_BD9, MODEL_LT8, MODEL_MT8, MODEL_HT8, MODEL_LT9, MODEL_MT9, MODEL_HT9,
+				MODEL_LC8, MODEL_MC8, MODEL_HC8, MODEL_RS8, MODEL_RS9, MODEL_CL8, MODEL_HH8, MODEL_HH9, MODEL_SRN, MODEL_BNG };
+		int checkTau = 0;
+		for(unsigned k = 0; k < sizeof(oneDecay); k++) checkTau |= oneDecay[k] == ins;
+		bad |= checkTau && fabsf(s.tau / tauSet - 1.f) > 0.12f;
+
+		printf("  %s %3u   %s  %7.0f/%7.0f ms %c  %5.0f/%5.0f ms  %6d/%6d %6d%s\n", anNames[ins], activeParameters[PAR_VELOD1],
+				setupBad ? "FAIL" : "ok  ", tauSet * 1000.f, s.tau * 1000.f, checkTau ? '*' : ' ', s.t60 * 1000.f, T * 1000.f,
+				fade0, last, fadeEnd, bad ? "  FAIL" : "");
 		fail |= bad;
 	}
-	printf("\n");
 
-	//a step locked to another instrument, then a step without lock
-	sendParam(par, MODEL_BD8);
-	analogSetup_onParamChanged(par, MODEL_BD8);
-	const uint8_t decay = activeParameters[PAR_VELOD1];
-	AutomationNode node;
-	autoNode_init(&node);
-	autoNode_setDestination(&node, par < 128 ? par + 1 : par);	//stored as the sequencer does (seq_automationTarget)
-	autoNode_updateValue(&node, MODEL_CP8);
-	slot_trigger(slot, 127, 60);
-	int peak, nan = 0;
-	renderSound(1, &peak, &nan);
-	const uint8_t locked = voiceSlots[slot].u.analog.inst.waveform;
-	autoNode_setDestination(&node, NO_AUTOMATION);
-	slot_trigger(slot, 127, 60);
-	renderSound(1, &peak, &nan);
-	const uint8_t after = voiceSlots[slot].u.analog.inst.waveform;
-	const int lockBad = locked != MODEL_CP8 || after != MODEL_BD8 || activeParameters[PAR_VELOD1] != decay || nan;
-	printf("step lock of the instrument: %s\n", lockBad ? "FAILED" : "ok");
-	fail |= lockBad;
+	//--- pitch: coarse 0 is the instrument's original tuning, the step note and coarse transpose
+	{
+		static const struct { uint8_t ins; float hz; } tuned[] =
+		{
+			{ MODEL_BD8, 52.f }, { MODEL_BD9, 54.f }, { MODEL_LT8, 90.f }, { MODEL_MT8, 135.f }, { MODEL_HT8, 185.f },
+			{ MODEL_LT9, 110.f }, { MODEL_MT9, 160.f }, { MODEL_HT9, 220.f },
+			{ MODEL_LC8, 185.f }, { MODEL_MC8, 250.f }, { MODEL_HC8, 400.f },
+		};
+		printf("pitch (Hz, defined / measured):");
+		for(unsigned k = 0; k < sizeof(tuned) / sizeof(tuned[0]); k++)
+		{
+			anChoose(0, tuned[k].ins);
+			const int blocks = (int)(anEgLength(0, 0) / AN_BLOCK_S) + 10;
+			anCapture(0, 0, 127, 60, blocks);
+			const AnShape s = anShape(blocks);
+			const float hz = anPitch(&s, tuned[k].hz);
+			const int bad = fabsf(hz / tuned[k].hz - 1.f) > 0.04f;
+			printf(" %s %.0f/%.1f%s", anNames[tuned[k].ins], tuned[k].hz, hz, bad ? " FAIL" : "");
+			fail |= bad;
+		}
+		printf("\n");
+		anChoose(0, MODEL_BD8);
+		const int blocks = (int)(anEgLength(0, 0) / AN_BLOCK_S) + 10;
+		anCapture(0, 0, 127, 72, blocks);
+		AnShape s = anShape(blocks);
+		const float noteUp = anPitch(&s, 104.f);
+		sendParam(PAR_COARSE1, 72);
+		anSettle();
+		anCapture(0, 0, 127, 60, blocks);
+		s = anShape(blocks);
+		const float coarseUp = anPitch(&s, 104.f);
+		sendParam(PAR_COARSE1, 60);
+		const int bad = fabsf(noteUp / 104.f - 1.f) > 0.04f || fabsf(coarseUp / 104.f - 1.f) > 0.04f;
+		printf("BD8 an octave up (104 Hz): step note %.1f Hz, coarse +12 %.1f Hz%s\n", noteUp, coarseUp, bad ? "  FAIL" : "");
+		fail |= bad;
+	}
+
+	//--- velocity is the accent of these instruments (more click and snap), the others ignore it;
+	//with velocity to volume off (vvo, the init kit's setting) only the accent remains
+	{
+		static const uint8_t accented[] = { MODEL_BD8, MODEL_BD9, MODEL_SD8, MODEL_SD9, MODEL_HH8, MODEL_HH9, MODEL_CR9, MODEL_RD9,
+				MODEL_SRN, MODEL_GND, MODEL_BNG, MODEL_GNG, MODEL_DJB, MODEL_DJT, MODEL_DJS, MODEL_CGO, MODEL_CGS,
+				MODEL_ODK, MODEL_NGD, MODEL_SHM, MODEL_TKR };
+		static int16_t hard[40 * OUTPUT_DMA_SIZE];
+		int bad = 0;
+		sendParam(PAR_VOLUME_MOD_ON_OFF1, 0);
+		printf("accent (largest difference soft/hard hit, %% of the peak):");
+		for(uint8_t ins = 0; ins < NUM_ANALOG_MODELS; ins++)
+		{
+			int isAccented = 0;
+			for(unsigned k = 0; k < sizeof(accented); k++) isAccented |= accented[k] == ins;
+			anChoose(0, ins);
+			anCapture(0, 0, 127, 60, 40);
+			memcpy(hard, anBuf, sizeof(hard));
+			anCapture(0, 0, 40, 60, 40);
+			int peak = 1, diff = 0;
+			for(int i = 0; i < 40 * OUTPUT_DMA_SIZE; i++)
+			{
+				peak = abs(hard[i]) > peak ? abs(hard[i]) : peak;
+				diff = abs(hard[i] - anBuf[i]) > diff ? abs(hard[i] - anBuf[i]) : diff;
+			}
+			const int b = isAccented ? diff * 100 < peak * 3 : diff != 0;
+			printf(" %s %d%s", anNames[ins], diff * 100 / peak, b ? " FAIL" : "");
+			bad |= b;
+		}
+		//with velocity to volume on, a soft hit of an instrument without accent is the hard one, quieter
+		sendParam(PAR_VOLUME_MOD_ON_OFF1, 1);
+		anChoose(0, MODEL_LT8);
+		anCapture(0, 0, 127, 60, 40);
+		memcpy(hard, anBuf, sizeof(hard));
+		anCapture(0, 0, 40, 60, 40);
+		int peak = 1, diff = 0;
+		for(int i = 0; i < 40 * OUTPUT_DMA_SIZE; i++)
+		{
+			peak = abs(hard[i]) > peak ? abs(hard[i]) : peak;
+			diff = abs(hard[i] - anBuf[i] * 127 / 40) > diff ? abs(hard[i] - anBuf[i] * 127 / 40) : diff;
+		}
+		sendParam(PAR_VOLUME_MOD_ON_OFF1, 0);
+		const int b = diff * 100 > peak;
+		printf("\n  vvo on, LT8 soft hit scaled up: %d %% off%s\n", diff * 100 / peak, b ? " FAIL" : "");
+		fail |= bad | b;
+	}
+
+	//--- saturator: denser, no hard clipping
+	{
+		anChoose(0, MODEL_BD8);
+		const int blocks = 150;
+		//denser: a lower peak to average ratio; the peaks stay below full scale
+		float crest[2];
+		int peak[2], clipped = 0;
+		for(int on = 0; on < 2; on++)
+		{
+			sendParam(slot_rolePar[0][1], on ? 127 : 0);
+			anCapture(0, 0, 127, 60, blocks);
+			double e = 0;
+			peak[on] = 1;
+			for(int i = 0; i < blocks * OUTPUT_DMA_SIZE; i++)
+			{
+				e += (double)anBuf[i] * anBuf[i];
+				peak[on] = abs(anBuf[i]) > peak[on] ? abs(anBuf[i]) : peak[on];
+				clipped += on && abs(anBuf[i]) >= 32767;
+			}
+			crest[on] = 20.f * log10f(peak[on] / sqrtf((float)(e / (blocks * OUTPUT_DMA_SIZE))));
+		}
+		sendParam(slot_rolePar[0][1], 0);
+		const int bad = crest[1] > crest[0] - 2.f || clipped > 0;
+		printf("saturator on BD8: peak to average %.1f dB -> %.1f dB, peak %d -> %d, %d samples at full scale%s\n",
+				crest[0], crest[1], peak[0], peak[1], clipped, bad ? "  FAIL" : "");
+		fail |= bad;
+	}
+
+	//--- slot 6: HH8 and HH9 closed on track 6 (decay A), open on track 7 (decay B)
+	{
+		const uint8_t slot = NUM_VOICE_SLOTS - 1;
+		for(uint8_t ins = MODEL_HH8; ins <= MODEL_HH9; ins++)
+		{
+			anChoose(slot, ins);
+			const float tA = anEgLength(slot, 0), tB = anEgLength(slot, 1);
+			anCapture(slot, 0, 127, 60, (int)(tB * 1.2f / AN_BLOCK_S) + 20);
+			const float closed = anShape((int)(tB * 1.2f / AN_BLOCK_S) + 20).t60;
+			anCapture(slot, 1, 127, 60, (int)(tB * 1.2f / AN_BLOCK_S) + 20);
+			const float open = anShape((int)(tB * 1.2f / AN_BLOCK_S) + 20).t60;
+			const int bad = activeParameters[PAR_VELOD6_OPEN] == activeParameters[PAR_VELOD6_CLOSED] || open < 3.f * closed
+					|| closed > tA * 1.03f + 3 * AN_BLOCK_S || open > tB * 1.03f + 3 * AN_BLOCK_S;
+			printf("%s on slot 6: closed %.0f ms (decay A %u), open %.0f ms (decay B %u)%s\n", anNames[ins], closed * 1000.f,
+					activeParameters[PAR_VELOD6_CLOSED], open * 1000.f, activeParameters[PAR_VELOD6_OPEN], bad ? "  FAIL" : "");
+			fail |= bad;
+		}
+	}
+
+	//--- the setup only for the instrument chosen by hand on a slot running the engine
+	{
+		anChoose(0, MODEL_BD8);
+		sendParam(PAR_VELOD1, 100);
+		anArmedStep = 3;
+		anChoose(0, MODEL_SD8);
+		anArmedStep = -1;
+		int bad = anCheck(activeParameters[PAR_VELOD1] != 100, "no setup while a step is held");
+		seq_recordActive = 1;
+		anChoose(0, MODEL_CP8);
+		seq_recordActive = 0;
+		bad |= anCheck(activeParameters[PAR_VELOD1] != 100, "no setup while recording");
+		sendParam(slot_rolePar[0][1], 50);
+		analogSetup_onParamChanged(slot_rolePar[0][1], 50);
+		bad |= anCheck(activeParameters[PAR_VELOD1] != 100, "no setup for the saturator");
+		const uint8_t drumDecay = activeParameters[PAR_VELOD2];
+		sendParam(slot_rolePar[1][0], 3);	//slot 2 runs the drum engine: its mod osc waveform
+		analogSetup_onParamChanged(slot_rolePar[1][0], 3);
+		bad |= anCheck(activeParameters[PAR_VELOD2] != drumDecay, "no setup on a slot with another engine");
+		printf("setup only by hand on an analog slot: %s\n", bad ? "FAILED" : "ok");
+		fail |= bad;
+	}
+
+	//--- a step locked to another instrument, then a step without lock
+	{
+		const uint16_t par = slot_rolePar[0][0];
+		anChoose(0, MODEL_BD8);
+		const uint8_t decay = activeParameters[PAR_VELOD1];
+		AutomationNode node;
+		autoNode_init(&node);
+		autoNode_setDestination(&node, par < 128 ? par + 1 : par);	//stored as the sequencer does (seq_automationTarget)
+		autoNode_updateValue(&node, MODEL_CP8);
+		slot_trigger(0, 127, 60);
+		int peak, nan = 0;
+		renderSound(1, &peak, &nan);
+		const uint8_t locked = voiceSlots[0].u.analog.inst.waveform;
+		autoNode_setDestination(&node, NO_AUTOMATION);
+		slot_trigger(0, 127, 60);
+		renderSound(1, &peak, &nan);
+		const uint8_t after = voiceSlots[0].u.analog.inst.waveform;
+		const int bad = locked != MODEL_CP8 || after != MODEL_BD8 || activeParameters[PAR_VELOD1] != decay || nan;
+		printf("step lock of the instrument: %s\n", bad ? "FAILED" : "ok");
+		fail |= bad;
+	}
+
+	printf("analog voice renders: hash %08x\n", anHash);
 	printf(fail ? "ANALOG TEST FAILED\n" : "analog test passed\n");
+	return fail;
+}
+#endif
+
+#ifdef HAVE_ENGINE_MODAL
+//Modal engine regression: renders of the voice alone over its exciters, partials and settings,
+//pitches and velocities (with velocity to volume off and on), as a hash (compare.sh compares it between trees, mutate.sh uses it)
+static int modalTest(void)
+{
+	kitEngines_setStock(kitEngines);
+	kitEngines_apply();
+	loadKit(0);
+	switchEngine(0, ENGINE_MODAL);
+	int peak, nan = 0;
+	renderSound(300, &peak, &nan);
+	uint32_t h = 2166136261u;
+	int16_t buf[OUTPUT_DMA_SIZE];
+	static VoiceSlot c;
+	int silent = 0, k = 0;
+	for(uint8_t exc = 0; exc < 3; exc++)
+		for(uint8_t prt = 0; prt < 4; prt++)
+			for(uint8_t v = 0; v < 3; v++, k++)
+			{
+				static const uint8_t vals[3] = { 10, 64, 120 };
+				sendParam(slot_rolePar[0][0], exc);
+				sendParam(slot_rolePar[0][6], prt);
+				for(uint8_t role = 1; role < 6; role++)	//damping, structure, brightness, position, hardness
+					sendParam(slot_rolePar[0][role], vals[(v + role) % 3]);
+				sendParam(PAR_VOLUME_MOD_ON_OFF1, k % 2);	//velocity to volume (vvo) off and on
+				renderSound(20, &peak, &nan);
+				c = voiceSlots[0];
+				hwRngState = 0x12345678;
+				Modal_trigger(&c.u.modal, (uint8_t)(40 + 40 * v), (uint8_t)(48 + k % 24));
+				int last = -1;
+				for(int b = 0; b < 300; b++)
+				{
+					SVF_recalcFreq(&c.u.c.filter);
+					Modal_calcAsync(&c.u.modal);
+					Modal_calcSyncBlock(&c.u.modal, buf, OUTPUT_DMA_SIZE);
+					h = fnv(buf, sizeof(buf)) ^ h * 16777619u;
+					for(int i = 0; i < OUTPUT_DMA_SIZE; i++) if(abs(buf[i]) > 32) last = b;
+				}
+				silent += last < 0;
+			}
+	printf("modal voice renders: %d settings, %d silent, hash %08x\n", k, silent, h);
+	const int fail = nan || silent;
+	printf(fail ? "MODAL TEST FAILED\n" : "modal test passed\n");
 	return fail;
 }
 #endif
@@ -692,6 +1075,16 @@ int main(int argc, char** argv)
 		return engineTest();
 	}
 #endif
+#ifdef HAVE_ENGINE_MODAL
+	if(argc == 2 && strcmp(argv[1], "--modal") == 0)
+	{
+		mapPeripherals();
+		for(int i = 0; i < 6; i++) faders[i] = 1.f;
+		setJackSwitches(0xf);
+		soundengine_init();
+		return modalTest();
+	}
+#endif
 #ifdef HAVE_ENGINE_ANALOG
 	if(argc == 2 && strcmp(argv[1], "--analog") == 0)
 	{
@@ -710,7 +1103,7 @@ int main(int argc, char** argv)
 	}
 	if(argc != 2)
 	{
-		fprintf(stderr, "usage: %s [--no-limiter] <output file> | --engines | --analog | --parser\n", argv[0]);
+		fprintf(stderr, "usage: %s [--no-limiter] <output file> | --engines | --modal | --analog | --parser\n", argv[0]);
 		return 2;
 	}
 	mapPeripherals();

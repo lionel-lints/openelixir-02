@@ -22,9 +22,29 @@ slot's 7 engine specific parameters must change the sound of the engine it runs 
 the roles that engine doesn't have). The voice level checks render a copy of the voice,
 so they don't depend on the mixer, FX or the other voices.
 
-`render --analog` checks the Analog engine's UI side: every instrument chosen by hand (as turning
-the `ins` knob) gets its voice setup and sounds, and fades within the amp EG's length; a step lock of
-the instrument plays it on that step, the next step plays the voice's instrument again.
+`render --analog` checks the Analog engine against what its instruments are defined to do, from
+the rendered voice (alone, after the mixer's smoothing has settled):
+- every instrument chosen by hand (as turning `ins`) gets the setup (coarse/fine 0, attack 0, its
+  decay, slope 127, saturator, transient, drive and filter off), and nothing else triggers it: not
+  while a step is held or recording, not the saturator, not a slot with another engine;
+- the decay: the time constant set by the decay knob (measured between -20 and -50 dB, within 12 %
+  for the instruments with one decay: kicks, toms, congas, rims, claves, hats, saron, bonang), and
+  -60 dB no later than the end of the amp EG;
+- a retrigger while ringing fades the old hit out from the voice's last sample (compared with the
+  same retrigger without the fade): no click;
+- pitch: the defined frequencies of the kicks, toms and congas at coarse 0, an octave up by the step
+  note and by coarse;
+- velocity: the accent changes exactly the instruments that have one, the others render identically
+  at any velocity (velocity to volume off); with it on, a soft hit is the hard one, quieter;
+- saturator: denser (lower peak to average), no clipping; slot 6: HH8/HH9 closed on track 6, open
+  on track 7; a step lock of the instrument plays it on that step only.
+It prints a hash of everything it rendered; `compare.sh` compares it between the two trees when
+both have the engine.
+
+`render --modal` renders the Modal voice alone over its 3 exciters, 4 partial counts and 3 sets of
+the other settings, at several pitches and velocities (velocity to volume off and on), and prints a
+hash; every setting must sound.
+`compare.sh` compares the hash between the trees like the Analog one.
 
 `render --parser` checks how the sequencer side handles the UI's messages: their 7-bit values
 are used as array indices, so out-of-range values must be ignored. A request for the Euclid
@@ -53,7 +73,8 @@ How it works:
 - After every kit the constant tables in DTCM (transient samples, sine table) must be
   unchanged; otherwise `render` stops with exit status 3. An out-of-bounds write into them
   changes the sound depending on the memory layout. (This found the ping-pong delay bug.)
-- `mutate.sh`: checks that a tiny change in each voice engine is detected.
+- `mutate.sh`: checks that a tiny change in each voice engine is detected (the Modal and Analog
+  voices through `render --modal` and `render --analog`: the kit renders use the stock engines).
 - `stats.py`: level statistics per kit of a render file.
 
 Linux only (uses `mmap` with fixed addresses). Needs gcc and Python 3.

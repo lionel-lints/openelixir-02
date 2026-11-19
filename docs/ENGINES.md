@@ -65,7 +65,8 @@ engine; the other pages are Drum 1's without pitch EG and FM. Clicking the encod
 the instrument's full name.
 
 - **The amp decay sets how long the instrument rings**; use the amp envelope as a gate (slope 127),
-  the instrument fades to silence when it closes. Slot 6 has decay A and B as usual: `HH8` or `HH9`
+  the instrument fades to silence when it closes. The decay sets the time constant of the fade:
+  BD8's setup (decay 65) falls by 9 dB every 220 ms and reaches -60 dB after 1.5 s. Slot 6 has decay A and B as usual: `HH8` or `HH9`
   with a short decay A and a long decay B are closed and open hi-hat on tracks 6 and 7.
 - **Coarse 0 (fine 0) is the instrument's original tuning**; coarse, fine and the step note
   transpose it.

@@ -33,3 +33,12 @@ else
 	paste "$WORK/out-$SHA/hashes.txt" "$WORK/out-work/hashes.txt" | awk '$3 != $6 {print "  " $0}'
 	exit 1
 fi
+
+# the voices of the engines without a stock slot (render --modal, --analog), when both trees have them
+for engine in modal analog; do
+	hashOf() { "$1" --$engine 2>/dev/null | sed -n "s/^$engine voice renders: .*hash //p"; }
+	A=$(cd "$WORK/out-$SHA" && hashOf ./render); B=$(cd "$WORK/out-work" && hashOf ./render)
+	if [ -n "$A" ] && [ -n "$B" ]; then
+		if [ "$A" = "$B" ]; then echo "IDENTICAL: $engine voice ($B)"; else echo "DIFFERENT: $engine voice ($A | $B)"; exit 1; fi
+	fi
+done

@@ -8,6 +8,9 @@ in `Core/Src/Soundengine/DSPAudio/AnalogModels.c`. The samples must be identical
 checks that every instrument sounds in every case and doesn't sit at full scale (the 808 claves
 three octaves up ring at 20 kHz, above the models' limit, and are silent there as in AnalogModels).
 
+`check_presets.py` compares the setup table of `Core/Src/menu/analogSetup.c` (each instrument's
+decay and open decay, and the setup constants) with AnalogModels' `original/modelPresets.c`.
+
 `original/Soundengine/DSPAudio/Oscillator.h` stands in for AnalogModels' `OscInfo`: only the fields
 its instruments use, so the original builds without the rest of its tree.
 

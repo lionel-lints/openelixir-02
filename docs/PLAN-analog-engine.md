@@ -85,5 +85,6 @@ Credits: AnalogModels by G3nzalo, GPL-3.0; noted in NOTICE.md and the docs.
 Found on the way: the UI decoded a received NRPN 98 only for the engines 0-3, so a received modal
 (24-29) switched the sound but not the menu. Both sides now share `slot_decodeEngineCommand()`.
 
-Note on lengths: the decays of the setup are AnalogModels'; its comments ("BD8 220 ms") describe the
-audible length, the instrument reaches -60 dB at the end of the amp EG (BD8: about 1.5 s).
+Note on lengths: the decays of the setup are AnalogModels'. Its comments ("BD8 220 ms") are the
+time constant of the decay (down to 37 %, -8.7 dB); the instrument reaches -60 dB after 6.9 time
+constants, when the amp EG ends (BD8: 1.5 s). `render --analog` measures both from the audio.
