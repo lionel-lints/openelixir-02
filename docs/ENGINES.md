@@ -1,6 +1,6 @@
 # Voice engines
 
-Each of the 6 voice slots can run any of the 5 engines: drum, snare, cymbal, hi-hat or modal. Track 7
+Each of the 6 voice slots can run any of the 6 engines: drum, snare, cymbal, hi-hat, modal or analog. Track 7
 is always the second trigger of slot 6, for any engine: track 6 plays with decay A, track 7 with
 decay B, and each cuts the other off (like closed and open hi-hat).
 
@@ -13,7 +13,8 @@ select button (OSC, AEG, ...) opens that page of the voice, any mode button anot
 
 Via MIDI: NRPN 98 (CC 99 = 0, CC 98 = 98, CC 6 = value), value = slot × 4 + engine, with slots
 0-5 and engines 0 drum, 1 snare, 2 cymbal, 3 hi-hat. Example for slot 4 → drum: `B0 63 00 B0 62 62
-B0 06 0C`. The modal engine has the values 24-29 (24 + slot). Only a received NRPN changes the
+B0 06 0C`. The modal engine has the values 24-29 (24 + slot), the analog engine 30-35 (30 + slot).
+Only a received NRPN changes the
 engine; it is not a kit parameter.
 
 When a slot changes its engine, all its sound parameters (including volume, pan, output and LFO)
@@ -42,6 +43,43 @@ The menu pages are Drum 1's without oscillator waveform and PWM.
 | 6 | `prt` partials | 8, 12, 16 or 24 modes (more = richer bells and plates, more CPU) |
 
 Older OpenElixir-02 versions and the stock firmware load a slot with the modal engine with the
+slot's stock engine.
+
+## Analog engine
+
+The instruments of the Roland TR-808 and TR-909, modelled after their circuits, and acoustic
+instruments modelled after their modes of vibration, from
+[AnalogModels](https://github.com/G3nzalo/analogmodels-firmware) by G3nzalo (version 0.5, the sound
+unchanged: `test/analog` renders every instrument with both sources and compares them bit for bit).
+Each instrument makes its own pitch sweeps, clicks, noise and envelopes. It replaces the oscillators;
+transient, filter, amp envelope, velocity, drive, LFO, pan and output work as with the drum engine.
+
+| Role | Name | Setting |
+|---|---|---|
+| 0 | `ins` instrument | 808: `BD8` kick, `SD8` snare, `LT8` `MT8` `HT8` toms, `LC8` `MC8` `HC8` congas, `RS8` rim shot, `CL8` claves, `CP8` clap, `MA8` maracas, `CB8` cowbell, `HH8` hi-hat, `CY8` cymbal. 909: `BD9` kick, `SD9` snare, `LT9` `MT9` `HT9` toms, `RS9` rim shot, `CP9` clap, `HH9` hi-hat, `CR9` crash, `RD9` ride. Gamelan: `SRN` saron, `GND` gender, `BNG` bonang, `GNG` gong. Hand drums: `DJB` `DJT` `DJS` djembe bass/tone/slap, `CGO` `CGS` conga open/slap. Taiko: `ODK` odaiko, `NGD` nagado, `SHM` shime, `TKR` rim |
+| 1 | `sat` saturator | a tube saturator, 0 = off |
+| 2-6 | – | no function |
+
+`ins` and `sat` are on the first page, where the oscillator waveform and PWM are on the drum
+engine; the other pages are Drum 1's without pitch EG and FM. Clicking the encoder on `ins` shows
+the instrument's full name.
+
+- **The amp decay sets how long the instrument rings**; use the amp envelope as a gate (slope 127),
+  the instrument fades to silence when it closes. Slot 6 has decay A and B as usual: `HH8` or `HH9`
+  with a short decay A and a long decay B are closed and open hi-hat on tracks 6 and 7.
+- **Coarse 0 (fine 0) is the instrument's original tuning**; coarse, fine and the step note
+  transpose it.
+- **Velocity is the accent**: harder hits have more click and snap.
+- **Choosing an instrument by hand sets up the voice to play like the original**: coarse and fine 0,
+  amp attack 0, the instrument's decay (slot 6: also decay B), slope 127, saturator, transient,
+  drive off, filter off. Adjust from there. Not while a step is held (then the instrument becomes a
+  lock of that step) and not while recording. Switching a slot to the analog engine starts with
+  `BD8` set up this way.
+- **Instrument per step**: lock `ins` on a step like any parameter (hold the step, turn the knob); the
+  step plays that instrument, the other steps the voice's. A new instrument always starts on the
+  next hit, a ringing hit keeps its instrument.
+
+Older OpenElixir-02 versions and the stock firmware load a slot with the analog engine with the
 slot's stock engine.
 
 ## Loading a voice from another kit
@@ -111,15 +149,15 @@ decay B CC 62, for any engine.
 Each slot has 7 engine specific controls. Analogous controls of the engines share a role, so a
 controller mapping stays meaningful when the engine changes:
 
-| Role | Drum | Snare | Cymbal | Hi-hat | Modal |
-|---|---|---|---|---|---|
-| 0 | mod osc wave | – | mod osc 1 wave | mod osc 1 wave | exciter |
-| 1 | pitch EG decay | pitch EG decay | mod osc 2 wave | mod osc 2 wave | damping |
-| 2 | pitch EG amount | pitch EG amount | mod osc 2 freq | mod osc 2 freq | structure |
-| 3 | pitch EG slope | pitch EG slope | mod osc 2 gain | mod osc 2 gain | brightness |
-| 4 | FM amount | tone/noise mix | mod osc 1 gain | mod osc 1 gain | position |
-| 5 | FM freq | noise freq | mod osc 1 freq | mod osc 1 freq | hardness |
-| 6 | mix/FM mode | repeat | repeat | – | partials |
+| Role | Drum | Snare | Cymbal | Hi-hat | Modal | Analog |
+|---|---|---|---|---|---|---|
+| 0 | mod osc wave | – | mod osc 1 wave | mod osc 1 wave | exciter | instrument |
+| 1 | pitch EG decay | pitch EG decay | mod osc 2 wave | mod osc 2 wave | damping | saturator |
+| 2 | pitch EG amount | pitch EG amount | mod osc 2 freq | mod osc 2 freq | structure | – |
+| 3 | pitch EG slope | pitch EG slope | mod osc 2 gain | mod osc 2 gain | brightness | – |
+| 4 | FM amount | tone/noise mix | mod osc 1 gain | mod osc 1 gain | position | – |
+| 5 | FM freq | noise freq | mod osc 1 freq | mod osc 1 freq | hardness | – |
+| 6 | mix/FM mode | repeat | repeat | – | partials | – |
 
 The role's CC or NRPN per slot (for the slot's stock engine these are its stock controls):
 
@@ -133,5 +171,6 @@ The role's CC or NRPN per slot (for the slot's stock engine these are its stock 
 | 5 | CC 84 | CC 86 | CC 88 | CC 28 | CC 30 | CC 34 |
 | 6 | NRPN 6 | NRPN 7 | NRPN 8 | CC 69 | CC 70 | NRPN 96 |
 
-NRPN 95 and 96 (formerly unused) are only needed when slot 4 runs a drum, cymbal, hi-hat or modal
-engine (role 0) or slot 6 runs a drum, snare, cymbal or modal engine (role 6); they can't be modulated.
+NRPN 95 and 96 (formerly unused) are only needed when slot 4 runs a drum, cymbal, hi-hat, modal or
+analog engine (role 0) or slot 6 runs a drum, snare, cymbal or modal engine (role 6); they can't be
+modulated.

@@ -13,6 +13,7 @@
 #include "Preset/KitEngines.h"
 #include "Preset/InitKit.h"
 #include "menu/menu.h"
+#include "menu/analogSetup.h"
 #include "Soundengine/MIDI/MidiMessages.h"
 #include "frontPanelParser_ui.h"
 #include "Preset/PresetManager.h"
@@ -119,6 +120,8 @@ void kitEngines_stockLfoTargets(uint8_t* params)
 //---------------------------------------------------
 //Modal: Drum 1's page without the oscillator waveform and PWM (no oscillator is played)
 static const uint8_t kitEngines_modalHidden[] = { PAR_OSC_WAVE_DRUM1, PAR_PWM_1 };
+//Analog: the same, the instrument and the tube saturator take the waveform's and PWM's places
+static const uint8_t kitEngines_analogMoved[] = { PAR_OSC_WAVE_DRUM1, 0, PAR_PWM_1, 1 };
 //order of enum VoiceEngine
 const KitEngineInfo kitEngines_info[NUM_ENGINES] =
 {
@@ -135,6 +138,17 @@ const KitEngineInfo kitEngines_info[NUM_ENGINES] =
 				DTYPE_0B127, DTYPE_0B127, DTYPE_MENU | (MENU_MODAL_PARTIALS<<8) },
 		.roleInit = { MODAL_EXC_MALLET, 64, 0, 64, 40, 64, 2 },	//mallet, 16 partials
 		.numHidden = sizeof(kitEngines_modalHidden), .hidden = kitEngines_modalHidden,
+	},
+	{
+		.name = "analog", .shortName = "ana", .stockSlot = ENGINE_NO_STOCK_SLOT, .templateSlot = 0,
+		//instrument, tube saturator; the instruments make their own pitch sweeps
+		.roleText = { TEXT_ANALOG_INSTRUMENT, TEXT_ANALOG_SAT, TEXT_EMPTY, TEXT_EMPTY,
+				TEXT_EMPTY, TEXT_EMPTY, TEXT_EMPTY },
+		.roleDtype = { DTYPE_MENU | (MENU_ANALOG_INSTRUMENT<<8), DTYPE_0B127, DTYPE_0B127, DTYPE_0B127,
+				DTYPE_0B127, DTYPE_0B127, DTYPE_0B127 },
+		.roleInit = { MODEL_BD8, 0, 0, 0, 0, 0, 0 },
+		.numHidden = sizeof(kitEngines_modalHidden), .hidden = kitEngines_modalHidden,
+		.numMoved = sizeof(kitEngines_analogMoved)/2, .moved = kitEngines_analogMoved,
 	},
 };
 //---------------------------------------------------
@@ -310,6 +324,21 @@ uint16_t kitEngines_templatePar(const uint8_t engine, const uint16_t par, uint8_
 	const KitEngineInfo* info = &kitEngines_info[engine];
 	if(info->stockSlot != ENGINE_NO_STOCK_SLOT)
 		return par;
+	for(uint8_t i=0;i<info->numMoved;i++)
+	{
+		const uint8_t role = info->moved[2*i+1];
+		//a moved role: shown in the place of the hidden parameter, not at its own
+		if(info->moved[2*i] == par)
+		{
+			*text = info->roleText[role];
+			return slot_rolePar[info->templateSlot][role];
+		}
+		if(slot_rolePar[info->templateSlot][role] == par)
+		{
+			*text = TEXT_EMPTY;
+			return PAR_NONE;
+		}
+	}
 	if(kitEngines_inHidden(info, par))
 	{
 		*text = TEXT_EMPTY;
@@ -440,6 +469,10 @@ void kitEngines_assign(const uint8_t slot, const uint8_t engine)
 	kitEngines_setTarget(PAR_VEL_DEST_1+slot, CC_VELO_TARGET, slot, 0);
 
 	kitEngines_turnOffRoleModulation(slot);
+
+	//the Analog engine starts with its first instrument, set up to play like the original
+	if(engine == ENGINE_ANALOG)
+		analogSetup_set(slot, activeParameters[slot_rolePar[slot][0]], activeParameters, NULL);
 
 	//the voice was re-initialized: send all its parameters
 	kitEngines_sendSlot(slot, list);

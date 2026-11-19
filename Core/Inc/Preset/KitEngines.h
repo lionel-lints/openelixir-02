@@ -84,6 +84,10 @@ typedef struct
 	uint8_t roleInit[NUM_SLOT_ROLES];		//defaults
 	uint8_t numHidden;
 	const uint8_t* hidden;					//template slot parameters without function
+	//roles shown in the place of a hidden template parameter instead of their own place:
+	//pairs of template slot parameter, role
+	uint8_t numMoved;
+	const uint8_t* moved;
 } KitEngineInfo;
 extern const KitEngineInfo kitEngines_info[NUM_ENGINES];
 

@@ -13,6 +13,7 @@ SRCS="$SRCS $ROOT/Core/Src/Soundengine/FxBus.c $ROOT/Core/Src/Soundengine/MIDI/M
 # UI side of engine switching (when the tree has it)
 if [ -f "$ROOT/Core/Src/Preset/KitEngines.c" ]; then
 	SRCS="$SRCS $ROOT/Core/Src/Preset/KitEngines.c $ROOT/Core/Src/menu/Cc2Text.c"
+	[ -f "$ROOT/Core/Src/menu/analogSetup.c" ] && SRCS="$SRCS $ROOT/Core/Src/menu/analogSetup.c"
 fi
 fail=0
 for f in $SRCS; do

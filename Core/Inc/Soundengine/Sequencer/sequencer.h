@@ -162,6 +162,7 @@ typedef struct TempPatternStruct
 }TempPattern;
 */
 extern uint8_t seq_activePattern;
+extern uint8_t seq_recordActive;
 extern uint8_t seq_pendingPattern;
 extern uint8_t seq_newPatternAvailable;
 extern uint8_t seq_prescaleCounter;

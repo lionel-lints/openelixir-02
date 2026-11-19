@@ -10,7 +10,7 @@
  * the root of the repository.
  *
  * The 6 voice slots. Each slot holds one voice of any engine (drum, snare,
- * cymbal, hi-hat, modal) in a union; the fields all engines share (VoiceCommon) are
+ * cymbal, hi-hat, modal, analog) in a union; the fields all engines share (VoiceCommon) are
  * at the same place whatever engine the slot runs. Tracks 1-6 trigger slots
  * 1-6, track 7 is the second trigger of slot 6 with its own amp decay.
  */
@@ -24,6 +24,7 @@
 #include "Soundengine/DSPAudio/CymbalVoice.h"
 #include "Soundengine/DSPAudio/HiHat.h"
 #include "Soundengine/DSPAudio/ModalVoice.h"
+#include "Soundengine/DSPAudio/AnalogVoice.h"
 #include "Parameters.h"
 
 #define NUM_VOICE_SLOTS	6
@@ -37,9 +38,11 @@ enum VoiceEngine
 	ENGINE_CYMBAL	= 2,
 	ENGINE_HIHAT	= 3,
 	ENGINE_MODAL	= 4,	//OpenElixir-02: struck resonator, no stock slot
+	ENGINE_ANALOG	= 5,	//808/909 and acoustic instruments (AnalogModels), no stock slot
 	NUM_ENGINES
 };
 #define HAVE_ENGINE_MODAL	1	//(for the host tests, which also build older trees)
+#define HAVE_ENGINE_ANALOG	1
 
 typedef struct
 {
@@ -51,6 +54,7 @@ typedef struct
 		CymbalVoice	cymbal;
 		HiHatVoice	hat;
 		ModalVoice	modal;
+		AnalogVoice	analog;
 	} u;
 	uint8_t		engine;		//enum VoiceEngine
 	float		decay[2];	//slot 6 only: amp decay of track 6 [0] and track 7 [1]
@@ -69,6 +73,20 @@ extern const uint8_t slot_rolePar[NUM_VOICE_SLOTS][NUM_SLOT_ROLES];
 //24 + slot + 6*(engine-4) for the engines added later
 #define PAR_SLOT_ENGINE	PAR_UNUSED_6
 #define SLOT_ENGINE_EXT_BASE	24
+//decode a PAR_SLOT_ENGINE value (sound engine and UI); an engine >= NUM_ENGINES is ignored by both
+static inline void slot_decodeEngineCommand(const uint8_t value, uint8_t* slot, uint8_t* engine)
+{
+	if(value < SLOT_ENGINE_EXT_BASE)
+	{
+		*slot = value>>2;
+		*engine = value&3;
+	}
+	else
+	{
+		*slot = (value - SLOT_ENGINE_EXT_BASE) % NUM_VOICE_SLOTS;
+		*engine = 4 + (value - SLOT_ENGINE_EXT_BASE) / NUM_VOICE_SLOTS;
+	}
+}
 
 //the engine every slot has in the stock firmware (and in kits without engine data)
 uint8_t slot_stockEngine(const uint8_t slot);

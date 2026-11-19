@@ -28,6 +28,7 @@
 #include "menu/copyClearTools.h"
 #include "menu/engineMenu.h"
 #include "menu/voiceLoad.h"
+#include "menu/analogSetup.h"
 #include "menu/projectBrowse.h"
 #include "Soundengine/DSPAudio/mixer.h"
 #include "Soundengine/DSPAudio/DjFilter.h"
@@ -280,6 +281,8 @@ const Name valueNames[NUM_NAMES] =
 		{SHORT_MODAL_POSITION, CAT_MODAL, LONG_MODAL_POSITION},/*TEXT_MODAL_POSITION*/
 		{SHORT_MODAL_HARDNESS, CAT_MODAL, LONG_MODAL_HARDNESS},/*TEXT_MODAL_HARDNESS*/
 		{SHORT_MODAL_PARTIALS, CAT_MODAL, LONG_MODAL_PARTIALS},/*TEXT_MODAL_PARTIALS*/
+		{SHORT_ANALOG_INSTRUMENT, CAT_ANALOG, LONG_ANALOG_INSTRUMENT},/*TEXT_ANALOG_INSTRUMENT*/
+		{SHORT_ANALOG_SAT, CAT_ANALOG, LONG_ANALOG_SAT},/*TEXT_ANALOG_SAT*/
 
 
 };
@@ -3159,6 +3162,9 @@ static uint8_t getMaxEntriesForMenu(uint8_t menuId)
 	case MENU_MODAL_PARTIALS:
 		return modalPartialNames[0][0];
 
+	case MENU_ANALOG_INSTRUMENT:
+		return analogInstrumentNames[0][0];
+
 	default:
 		return 0;
 	}
@@ -3288,6 +3294,10 @@ static void getMenuItemNameForValue(const uint8_t menuId, const uint8_t curParmV
 		p = MENU_ITEM(modalPartialNames);
 		break;
 
+	case MENU_ANALOG_INSTRUMENT:
+		p = MENU_ITEM(analogInstrumentNames);
+		break;
+
 
 	default:
 		p=menuText_dash;
@@ -3308,6 +3318,7 @@ static const char* getMenuItemLongName(const uint8_t menuId, const uint8_t curPa
 	case MENU_FILTER:			return LONG_ITEM(filterTypes, filterLongNames);
 	case MENU_TRANS:			return LONG_ITEM(transientNames, transientLongNames);
 	case MENU_MODAL_EXCITER:	return LONG_ITEM(modalExciterNames, modalExciterLongNames);
+	case MENU_ANALOG_INSTRUMENT:	return LONG_ITEM(analogInstrumentNames, analogInstrumentLongNames);
 	case MENU_AUDIO_OUT:		return LONG_ITEM(outputNames, outputLongNames);
 	case MENU_AUDIO_OUT_FX:		return LONG_ITEM(outputNamesFx, outputLongNames);
 	case MENU_LFO_WAVES:		return LONG_ITEM(lfoWaveNames, lfoWaveLongNames);
@@ -3707,6 +3718,9 @@ static void menu_encoderChangeParameter(int8_t inc)
 		menu_parseGlobalParam(paramNr,activeParameters[paramNr]);
 
 	//frontPanel_sendData(0xb0,paramNr,*paramValue);
+
+	//an instrument of the Analog engine brings its voice settings
+	analogSetup_onParamChanged(paramNr, *paramValue);
 }
 
 //-----------------------------------------------------------------
@@ -4973,6 +4987,9 @@ uint8_t menu_parseKnobValue(uint8_t potNr, int16_t diff)
 		break;
 	}
 	}
+
+	//an instrument of the Analog engine brings its voice settings
+	analogSetup_onParamChanged(paramNr, activeParameters[paramNr]);
 
 	return 1;
 }

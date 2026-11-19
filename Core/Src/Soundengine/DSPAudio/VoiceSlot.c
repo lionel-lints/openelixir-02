@@ -52,6 +52,7 @@ static void slot_initEngine(VoiceSlot* s, const uint8_t slot)
 	case ENGINE_CYMBAL:	Cymbal_init(&s->u.cymbal, slot);	break;
 	case ENGINE_HIHAT:	HiHat_init(&s->u.hat, slot);		break;
 	case ENGINE_MODAL:	Modal_init(&s->u.modal, slot);		break;
+	case ENGINE_ANALOG:	Analog_init(&s->u.analog, slot);	break;
 	default:			Drum_init(&s->u.drum, slot);		break;
 	}
 }
@@ -105,6 +106,7 @@ void slot_trigger(const uint8_t track, const uint8_t vel, const uint8_t note)
 	case ENGINE_CYMBAL:	Cymbal_trigger(&s->u.cymbal, vel, note);			break;
 	case ENGINE_HIHAT:	HiHat_trigger(&s->u.hat, vel, second, note);		break;
 	case ENGINE_MODAL:	Modal_trigger(&s->u.modal, vel, note);				break;
+	case ENGINE_ANALOG:	Analog_trigger(&s->u.analog, vel, note);			break;
 	default:			Drum_trigger(&s->u.drum, vel, note);				break;
 	}
 
@@ -199,6 +201,17 @@ static void slot_setModalRole(ModalVoice* v, const uint8_t role, const uint8_t i
 	}
 }
 //---------------------------------------------------
+//Analog: instrument, tube saturator; the other roles have no function
+static void slot_setAnalogRole(AnalogVoice* v, const uint8_t role, const uint8_t itg, const float flt, const uint8_t isFloatModulator)
+{
+	switch(role)
+	{
+	case 0:	Analog_setInstrument(v, isFloatModulator ? (uint8_t)(flt * (NUM_ANALOG_MODELS-1) + 0.5f) : itg);	break;
+	case 1:	v->sat = flt;	break;
+	default:	break;
+	}
+}
+//---------------------------------------------------
 uint8_t slot_setRoleParameter(const uint16_t par, const uint8_t itg, const float flt, const uint8_t isFloatModulator)
 {
 	for(uint8_t slot=0;slot<NUM_VOICE_SLOTS;slot++)
@@ -223,6 +236,9 @@ uint8_t slot_setRoleParameter(const uint16_t par, const uint8_t itg, const float
 				break;
 			case ENGINE_MODAL:
 				slot_setModalRole(&s->u.modal, role, itg, flt);
+				break;
+			case ENGINE_ANALOG:
+				slot_setAnalogRole(&s->u.analog, role, itg, flt, isFloatModulator);
 				break;
 			case ENGINE_HIHAT:
 				if(role != 6)

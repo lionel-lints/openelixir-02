@@ -40,6 +40,10 @@ uint8_t menu_getActiveVoice(void) { return 0; }
 uint8_t menu_getSubPage(void) { return 0; }
 uint8_t menu_getViewedPattern(void) { return 0; }
 void menu_repaint(void) { }
+//(Analog engine setup, menu/analogSetup.c; weak: older trees have no such file)
+__attribute__((weak)) void menu_repaintAll(void) { }
+__attribute__((weak)) uint8_t seq_recordActive = 0;
+__attribute__((weak)) int8_t buttonHandler_getArmedAutomationStep(void) { return -1; }
 void menu_switchSubPage(uint8_t subPageNr, uint8_t toggle) { }
 void preset_morph_tick(void) { }
 void seq_addNote(uint8_t trackNr,uint8_t vel, uint8_t note) { }

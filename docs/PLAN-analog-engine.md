@@ -27,7 +27,7 @@ voice's usual filter, transient, amp envelope, drive, LFO, velocity, pan, output
 - Measured cost (AnalogModels' `tools/m7_bench`): 11k-15k instructions per block for most
   instruments on a drum voice, 16k-24k for the heaviest, against about 313k cycles per block.
 
-## Decisions (proposed)
+## Decisions
 
 1. **An engine, not extra waveforms.** AnalogModels adds the instruments to every waveform list;
    here they become engine 5, "analog" (`ana`), with no stock slot, Drum 1's page as the template,
@@ -41,15 +41,20 @@ voice's usual filter, transient, amp envelope, drive, LFO, velocity, pan, output
 3. **Acoustic instruments included** (decided 2026-11-19).
 4. **Choosing an instrument by hand sets up the voice** like AnalogModels (its `modelPresets.c`),
    not while a step is held or automation is recorded. Switching the engine to analog starts with
-   instrument BD8 and that setup.
+   instrument BD8 and that setup. (`menu/analogSetup.c`)
+4a. **`ins` and `sat` on the first page**, in the places of the hidden oscillator waveform and PWM
+   (a new `moved` list in the engine description), not on the FM and Mod pages where roles 0 and 1
+   sit on the drum page.
+4b. **A new instrument starts on the next hit**: a ringing hit keeps its instrument (its state means
+   something else to another instrument). Step locks work with this: the lock is applied before the
+   step's trigger.
 5. **The DSP stays as it is.** `AnalogModels.c` is taken over with the smallest change: its state
    comes from the engine's voice instead of `OscInfo`. Rendered output must be bit-identical to
    AnalogModels' code for the same input.
 6. **Slot 6** (closed/open hat): track 6 plays with decay A, track 7 with decay B, as with the
    other engines; the instrument is the slot's.
-7. **One instrument per step** through the existing step automation on the `ins` parameter, if it
-   works (it is an ordinary sound parameter): verified in a test, nothing new built. If it doesn't,
-   it is noted for later.
+7. **One instrument per step** through the existing step automation on the `ins` parameter: works,
+   verified by `render --analog`.
 8. **Out of scope:** AnalogModels' 8 parameter locks, slendro/pelog scales, voice FX, its
    stock-firmware fixes (the ones that matter are in this build already).
 
@@ -76,3 +81,9 @@ On `lionel/analog-engine`:
 4. Test image 1.99.5, CPU meter build, hardware check, merge.
 
 Credits: AnalogModels by G3nzalo, GPL-3.0; noted in NOTICE.md and the docs.
+
+Found on the way: the UI decoded a received NRPN 98 only for the engines 0-3, so a received modal
+(24-29) switched the sound but not the menu. Both sides now share `slot_decodeEngineCommand()`.
+
+Note on lengths: the decays of the setup are AnalogModels'; its comments ("BD8 220 ms") describe the
+audible length, the instrument reaches -60 dB at the end of the amp EG (BD8: about 1.5 s).

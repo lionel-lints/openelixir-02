@@ -264,6 +264,9 @@ static void voiceTrigger(VoiceSlot* c, uint8_t slot, uint8_t second)
 #ifdef HAVE_ENGINE_MODAL
 	case ENGINE_MODAL:	Modal_trigger(&c->u.modal, 127, 60);			break;
 #endif
+#ifdef HAVE_ENGINE_ANALOG
+	case ENGINE_ANALOG:	Analog_trigger(&c->u.analog, 127, 60);			break;
+#endif
 	default:			Drum_trigger(&c->u.drum, 127, 60);				break;
 	}
 	if(slot == NUM_VOICE_SLOTS - 1) c->u.c.oscVolEg.decay = c->decay[second];	//as slot_trigger()
@@ -285,6 +288,9 @@ static uint32_t voiceRender(VoiceSlot* c, int blocks, int* len)
 		case ENGINE_HIHAT:	HiHat_calcAsync(&c->u.hat);		HiHat_calcSyncBlock(&c->u.hat, buf, OUTPUT_DMA_SIZE);		break;
 #ifdef HAVE_ENGINE_MODAL
 		case ENGINE_MODAL:	Modal_calcAsync(&c->u.modal);	Modal_calcSyncBlock(&c->u.modal, buf, OUTPUT_DMA_SIZE);	break;
+#endif
+#ifdef HAVE_ENGINE_ANALOG
+		case ENGINE_ANALOG:	Analog_calcAsync(&c->u.analog);	Analog_calcSyncBlock(&c->u.analog, buf, OUTPUT_DMA_SIZE);	break;
 #endif
 		default:			calcDrumVoiceAsync(&c->u.drum);	calcDrumVoiceSyncBlock(&c->u.drum, buf, OUTPUT_DMA_SIZE);	break;
 		}
@@ -355,7 +361,10 @@ static int roleTest(int round)
 			sendParam(par, 0);
 			const uint32_t b = slotSoundHash(s);
 			sendParam(par, role == 6 ? 1 : 100);
-			const int unused = (engine == ENGINE_SNARE && role == 0) || (engine == ENGINE_HIHAT && role == 6);
+			int unused = (engine == ENGINE_SNARE && role == 0) || (engine == ENGINE_HIHAT && role == 6);
+#ifdef HAVE_ENGINE_ANALOG
+			unused |= engine == ENGINE_ANALOG && role >= 2;	//instrument and saturator only
+#endif
 			printf("%c", a != b ? 'x' : '.');
 			if((a != b) == unused)
 			{
@@ -491,6 +500,9 @@ static int engineTest(void)
 #ifdef HAVE_ENGINE_MODAL
 			"modal",
 #endif
+#ifdef HAVE_ENGINE_ANALOG
+			"analog",
+#endif
 	};
 	int fail = 0, peak, nan = 0;
 #if KIT_ENGINES_API >= 3
@@ -553,6 +565,65 @@ static int engineTest(void)
 	fail |= nrpnFail;
 	printf(fail || nan ? "ENGINE TEST FAILED\n" : "engine test passed\n");
 	return fail || nan;
+}
+#endif
+
+#ifdef HAVE_ENGINE_ANALOG
+#include "menu/analogSetup.h"
+#include "Soundengine/DSPAudio/automationNode.h"
+//Analog engine: every instrument chosen by hand (the UI's setup, menu/analogSetup.c) is played
+//and fades within the amp EG's length (a gate: the instrument has faded to -60 dB when it closes),
+//and a step lock of the instrument plays it on its step only
+static int analogTest(void)
+{
+	int fail = 0;
+	const uint8_t slot = 0;
+	const uint16_t par = slot_rolePar[slot][0];
+	kitEngines_setStock(kitEngines);
+	kitEngines_apply();
+	loadKit(0);
+	switchEngine(slot, ENGINE_ANALOG);
+	printf("analog instruments, ms to -60 dB / amp EG length:\n");
+	for(uint8_t ins = 0; ins < NUM_ANALOG_MODELS; ins++)
+	{
+		sendParam(par, ins);
+		analogSetup_onParamChanged(par, ins);
+		static VoiceSlot c;
+		c = voiceSlots[slot];
+		hwRngState = 0x12345678;
+		voiceTrigger(&c, slot, 0);
+		int len;
+		voiceRender(&c, 3000, &len);
+		const float egMs = OUTPUT_DMA_SIZE * 1000.f / ((float)c.u.c.oscVolEg.decay * REAL_FS);
+		const float ms = len * OUTPUT_DMA_SIZE * 1000.f / REAL_FS;
+		const int bad = c.u.analog.inst.waveform != ins || len == 0 || ms > egMs * 1.1f + 5.f;
+		printf(" %2u:%4.0f/%4.0f%s", ins, ms, egMs, bad ? " FAIL" : "");
+		if(ins % 8 == 7) printf("\n");
+		fail |= bad;
+	}
+	printf("\n");
+
+	//a step locked to another instrument, then a step without lock
+	sendParam(par, MODEL_BD8);
+	analogSetup_onParamChanged(par, MODEL_BD8);
+	const uint8_t decay = activeParameters[PAR_VELOD1];
+	AutomationNode node;
+	autoNode_init(&node);
+	autoNode_setDestination(&node, par < 128 ? par + 1 : par);	//stored as the sequencer does (seq_automationTarget)
+	autoNode_updateValue(&node, MODEL_CP8);
+	slot_trigger(slot, 127, 60);
+	int peak, nan = 0;
+	renderSound(1, &peak, &nan);
+	const uint8_t locked = voiceSlots[slot].u.analog.inst.waveform;
+	autoNode_setDestination(&node, NO_AUTOMATION);
+	slot_trigger(slot, 127, 60);
+	renderSound(1, &peak, &nan);
+	const uint8_t after = voiceSlots[slot].u.analog.inst.waveform;
+	const int lockBad = locked != MODEL_CP8 || after != MODEL_BD8 || activeParameters[PAR_VELOD1] != decay || nan;
+	printf("step lock of the instrument: %s\n", lockBad ? "FAILED" : "ok");
+	fail |= lockBad;
+	printf(fail ? "ANALOG TEST FAILED\n" : "analog test passed\n");
+	return fail;
 }
 #endif
 
@@ -621,6 +692,16 @@ int main(int argc, char** argv)
 		return engineTest();
 	}
 #endif
+#ifdef HAVE_ENGINE_ANALOG
+	if(argc == 2 && strcmp(argv[1], "--analog") == 0)
+	{
+		mapPeripherals();
+		for(int i = 0; i < 6; i++) faders[i] = 1.f;
+		setJackSwitches(0xf);
+		soundengine_init();
+		return analogTest();
+	}
+#endif
 	if(argc == 2 && strcmp(argv[1], "--parser") == 0)
 	{
 		mapPeripherals();
@@ -629,7 +710,7 @@ int main(int argc, char** argv)
 	}
 	if(argc != 2)
 	{
-		fprintf(stderr, "usage: %s [--no-limiter] <output file> | --engines | --parser\n", argv[0]);
+		fprintf(stderr, "usage: %s [--no-limiter] <output file> | --engines | --analog | --parser\n", argv[0]);
 		return 2;
 	}
 	mapPeripherals();

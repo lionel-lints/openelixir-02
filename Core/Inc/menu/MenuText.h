@@ -45,8 +45,8 @@
 #define MENU_AUDIO_OUT_FX	26
 #define MENU_STEP_CHORD		27
 #define MENU_STEP_DIR		28
-//29, 30: MENU_MODAL_EXCITER, MENU_MODAL_PARTIALS in menu.h (also used by Preset/KitEngines.c)
-#define MENU_SWING_MODE		31	//(29 and 30: the Modal lists)
+//29, 30, 32: MENU_MODAL_EXCITER, MENU_MODAL_PARTIALS, MENU_ANALOG_INSTRUMENT in menu.h (also used by Preset/KitEngines.c)
+#define MENU_SWING_MODE		31	//(29, 30 and 32: the Modal and Analog lists)
 
 //-----------------------------------------------------------------
 // Shared texts. Reduce mem usage by pooling common text
@@ -116,6 +116,16 @@ const char modalPartialNames[][4] =
 	{"12"},
 	{"16"},
 	{"24"},
+};
+//Analog engine: the instruments (enum AnalogModelEnum)
+const char analogInstrumentNames[][4] =
+{
+	{38},		//number of entries
+	{"BD8"}, {"BD9"}, {"SD8"}, {"SD9"}, {"LT8"}, {"MT8"}, {"HT8"}, {"LT9"},
+	{"MT9"}, {"HT9"}, {"LC8"}, {"MC8"}, {"HC8"}, {"RS8"}, {"RS9"}, {"CL8"},
+	{"CP8"}, {"CP9"}, {"MA8"}, {"CB8"}, {"HH8"}, {"HH9"}, {"CY8"}, {"CR9"},
+	{"RD9"}, {"SRN"}, {"GND"}, {"BNG"}, {"GNG"}, {"DJB"}, {"DJT"}, {"DJS"},
+	{"CGO"}, {"CGS"}, {"ODK"}, {"NGD"}, {"SHM"}, {"TKR"},
 };
 //-----------------------------------------------------------------
 const char stepShiftNames[][4] =
@@ -454,6 +464,15 @@ const char modalExciterLongNames[][12] =
 {
 	{"Mallet"}, {"Noise burst"}, {"Bow"},
 };
+const char analogInstrumentLongNames[][12] =
+{
+	{"808 Kick"}, {"909 Kick"}, {"808 Snare"}, {"909 Snare"}, {"808 Low Tom"}, {"808 Mid Tom"}, {"808 Hi Tom"},
+	{"909 Low Tom"}, {"909 Mid Tom"}, {"909 Hi Tom"}, {"808 LoConga"}, {"808 MdConga"}, {"808 HiConga"}, {"808 Rimshot"},
+	{"909 Rimshot"}, {"808 Claves"}, {"808 Clap"}, {"909 Clap"}, {"808 Maracas"}, {"808 Cowbell"}, {"808 Hi-Hat"},
+	{"909 Hi-Hat"}, {"808 Cymbal"}, {"909 Crash"}, {"909 Ride"}, {"Saron"}, {"Gender"}, {"Bonang"},
+	{"Gong"}, {"Djembe Bass"}, {"Djembe Tone"}, {"Djembe Slap"}, {"Conga Open"}, {"Conga Slap"}, {"Odaiko"},
+	{"Nagado"}, {"Shime"}, {"Taiko Rim"},
+};
 const char outputLongNames[][9] =
 {
 	{"Stereo 1"}, {"Stereo 2"}, {"Left 1"}, {"Right 1"}, {"Left 2"}, {"Right 2"}, {"FX bus"},
@@ -607,6 +626,8 @@ const char shortNames[][4]  =
 	{"pos"},
 	{"hrd"},
 	{"prt"},
+	{"ins"},
+	{"sat"},
 
 };
 //-----------------------------------------------------------------
@@ -646,6 +667,7 @@ const char catNames[][16] =
 	{"DJ Filt."},
 	{"Perf"},
 	{"Modal"},
+	{"Analog"},
 };
 //-----------------------------------------------------------------
 // these must correspond to longNamesEnum
@@ -755,6 +777,8 @@ const char longNames[][16] =
 	{"Position"},
 	{"Hardness"},
 	{"Partials"},
+	{"Instrument"},
+	{"Saturator"},
 };
 
 

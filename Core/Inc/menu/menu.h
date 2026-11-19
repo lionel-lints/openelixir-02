@@ -68,6 +68,8 @@ extern uint32_t sucessTimer;
 //menus of the Modal engine's settings (the others are in MenuText.h)
 #define MENU_MODAL_EXCITER	29
 #define MENU_MODAL_PARTIALS	30
+//the Analog engine's instrument list
+#define MENU_ANALOG_INSTRUMENT	32
 
 //pattern save page: slot with steps that the next press on the same step button overwrites
 #define NO_PATTERN 0xFF
@@ -304,6 +306,8 @@ enum NamesEnum
 	TEXT_MODAL_POSITION,
 	TEXT_MODAL_HARDNESS,
 	TEXT_MODAL_PARTIALS,
+	TEXT_ANALOG_INSTRUMENT,
+	TEXT_ANALOG_SAT,
 
 
 	NUM_NAMES
@@ -425,7 +429,9 @@ enum shortNamesEnum
 	SHORT_MODAL_BRIGHTNESS,
 	SHORT_MODAL_POSITION,
 	SHORT_MODAL_HARDNESS,
-	SHORT_MODAL_PARTIALS
+	SHORT_MODAL_PARTIALS,
+	SHORT_ANALOG_INSTRUMENT,
+	SHORT_ANALOG_SAT
 
 	
 };
@@ -464,7 +470,8 @@ enum catNamesEnum
 	CAT_FX,
 	CAT_DJ_FILTER,
 	CAT_PERF,
-	CAT_MODAL
+	CAT_MODAL,
+	CAT_ANALOG
 };
 //-----------------------------------------------------------------
 // these must correspond with longNames in MenuText.h
@@ -572,7 +579,9 @@ enum longNamesEnum
 	LONG_MODAL_BRIGHTNESS,
 	LONG_MODAL_POSITION,
 	LONG_MODAL_HARDNESS,
-	LONG_MODAL_PARTIALS
+	LONG_MODAL_PARTIALS,
+	LONG_ANALOG_INSTRUMENT,
+	LONG_ANALOG_SAT
 	
 };
 

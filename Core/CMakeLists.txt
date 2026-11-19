@@ -56,6 +56,7 @@ add_library(lxr_ui OBJECT
     Src/menu/engineMenu.c
     Src/menu/projectBrowse.c
     Src/menu/voiceLoad.c
+    Src/menu/analogSetup.c
     Src/menu/menu.c
     Src/menu/screensaver.c
 )
@@ -82,6 +83,8 @@ add_library(lxr_dsp OBJECT
     Src/Soundengine/DSPAudio/lfo.c
     Src/Soundengine/DSPAudio/ModalResonator.c
     Src/Soundengine/DSPAudio/ModalVoice.c
+    Src/Soundengine/DSPAudio/AnalogModels.c
+    Src/Soundengine/DSPAudio/AnalogVoice.c
     Src/Soundengine/DSPAudio/mixer.c
     Src/Soundengine/DSPAudio/modulationNode.c
     Src/Soundengine/DSPAudio/Oscillator.c

@@ -43,8 +43,9 @@ Custom firmware for the Erica Synths LXR-02 drum machine. It is based on the ope
   (pointing to its kit 1); the own project doesn't change.
 
 **Freely assignable voice engines.** Each of the 6 voice slots can run any engine: drum, snare,
-cymbal or hi-hat. Select a voice and press SHIFT + KIT (or send NRPN 98). The engines are saved in
-the kit; kits from the stock firmware load with the stock engines.
+cymbal, hi-hat, modal (struck resonators) or analog (TR-808, TR-909, gamelan, hand drums and taiko,
+from AnalogModels by G3nzalo). Select a voice and press SHIFT + KIT (or send NRPN 98). The engines
+are saved in the kit; kits from the stock firmware load with the stock engines.
 
 Details for kits, patterns and engines: [docs/ENGINES.md](docs/ENGINES.md).
 

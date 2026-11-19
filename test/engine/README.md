@@ -22,6 +22,10 @@ slot's 7 engine specific parameters must change the sound of the engine it runs 
 the roles that engine doesn't have). The voice level checks render a copy of the voice,
 so they don't depend on the mixer, FX or the other voices.
 
+`render --analog` checks the Analog engine's UI side: every instrument chosen by hand (as turning
+the `ins` knob) gets its voice setup and sounds, and fades within the amp EG's length; a step lock of
+the instrument plays it on that step, the next step plays the voice's instrument again.
+
 `render --parser` checks how the sequencer side handles the UI's messages: their 7-bit values
 are used as array indices, so out-of-range values must be ignored. A request for the Euclid
 settings of a track must answer with that track's settings for tracks 1-7 and read nothing for
