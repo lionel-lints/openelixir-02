@@ -3545,10 +3545,15 @@ static void menu_skipHiddenTargets(uint8_t* value, int8_t inc, const uint8_t sta
 //-----------------------------------------------------------------
 static void menu_encoderChangeParameter(int8_t inc)
 {
-	preset_touchTimer(PRESET_KIT_TIMER);
-
 	const uint8_t activeParameter	= menuIndex & MASK_PARAMETER;
 	const uint8_t activePage		= (menuIndex&MASK_PAGE)>>PAGE_SHIFT;
+
+	//an empty place (e.g. the cursor on a page without any setting of the voice's engine): nothing
+	//to change, like the knobs
+	if(pgm_read_byte(&menu_getPage(menu_activePage,activePage)->top1 + activeParameter) == TEXT_EMPTY)
+		return;
+
+	preset_touchTimer(PRESET_KIT_TIMER);
 
 	//get address from top1-8 from activeParameter (base adress top1 + offset)
 	uint16_t paramNr		= pgm_read_word(&menu_getPage(menu_activePage,activePage)->bot1 + activeParameter);

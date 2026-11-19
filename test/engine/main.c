@@ -972,7 +972,8 @@ static int analogTest(void)
 #ifdef HAVE_ENGINE_ANALOG
 #include "menu/menuPages.h"
 //the menu pages of the engines without stock slot, built as menu_updateVoicePages() does: each named
-//role exactly once, no hidden parameter, no first screen empty while the second has parameters;
+//role exactly once, no hidden parameter, no first screen empty while the second has parameters, the
+//encoder reaches every setting;
 //the analog engine: ins and sat on the first page, velocity on the Mod page's first screen, FM empty
 static int pageTest(void)
 {
@@ -1004,6 +1005,11 @@ static int pageTest(void)
 					}
 			}
 			bad |= first == 0 && second > 0;
+			//the encoder steps from setting to setting and stops at an empty place: every setting
+			//shown must come before the first empty place (places marked skip are stepped over)
+			int lastShown = -1;
+			for(int i = 0; i < 8; i++) if(par[i] != PAR_NONE) lastShown = i;
+			for(int i = 0; i < lastShown; i++) bad |= text[i] == TEXT_EMPTY;
 		}
 		for(uint8_t role = 0; role < NUM_SLOT_ROLES; role++)
 			bad |= seen[role] != (info->roleText[role] != TEXT_EMPTY);
