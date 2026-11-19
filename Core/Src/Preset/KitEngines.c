@@ -355,6 +355,26 @@ uint16_t kitEngines_templatePar(const uint8_t engine, const uint16_t par, uint8_
 	return par;
 }
 //---------------------------------------------------
+void kitEngines_templatePage(const uint8_t engine, uint16_t* par, uint8_t* text)
+{
+	for(uint8_t i=0;i<8;i++)
+	{
+		par[i] = kitEngines_templatePar(engine, par[i], &text[i]);
+	}
+	if(kitEngines_info[engine].stockSlot != ENGINE_NO_STOCK_SLOT)
+		return;
+	if(par[0] == PAR_NONE && par[1] == PAR_NONE && par[2] == PAR_NONE && par[3] == PAR_NONE)
+	{
+		for(uint8_t i=0;i<4;i++)
+		{
+			par[i] = par[i+4];
+			text[i] = text[i+4];
+			par[i+4] = PAR_NONE;
+			text[i+4] = TEXT_EMPTY;
+		}
+	}
+}
+//---------------------------------------------------
 static uint8_t kitEngines_initValue(const uint8_t par)
 {
 	return par < INIT_KIT_SIZE - 8 ? initKit[8 + par] : 0;

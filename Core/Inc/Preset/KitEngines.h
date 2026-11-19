@@ -101,6 +101,10 @@ uint8_t kitEngines_isHiddenParam(const uint16_t par);
 //a parameter of an engine's template page (engines without stock slot): PAR_NONE if hidden;
 //for a role parameter *text becomes its name
 uint16_t kitEngines_templatePar(const uint8_t engine, const uint16_t par, uint8_t* text);
+//a sub page (8 parameters and their names) of the engine's stock or template slot as the engine shows
+//it: kitEngines_templatePar() for each; a first screen (parameters 1-4) left without any parameter
+//gets the second screen (e.g. Drum 1's pitch EG on an engine without one: its velocity settings)
+void kitEngines_templatePage(const uint8_t engine, uint16_t* par, uint8_t* text);
 
 //engines -> block, returns its size (KIT_ENGINES_BLOCK_SIZE)
 uint8_t kitEngines_encode(const uint8_t* engines, uint8_t* block);

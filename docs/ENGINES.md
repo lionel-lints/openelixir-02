@@ -21,7 +21,9 @@ When a slot changes its engine, all its sound parameters (including volume, pan,
 start from the new engine's defaults (the init kit), its own LFO and velocity targets are turned
 off, and modulation and step automation of its engine specific settings are turned off.
 
-The menu pages, value ranges and modulation target names of a slot follow its engine.
+The menu pages, value ranges and modulation target names of a slot follow its engine. A page whose
+first screen has no setting of the engine shows its second screen instead; a page with none at all
+says so ("analog voice has no FM").
 
 ## Modal engine
 
@@ -61,7 +63,8 @@ transient, filter, amp envelope, velocity, drive, LFO, pan and output work as wi
 | 2-6 | – | no function |
 
 `ins` and `sat` are on the first page, where the oscillator waveform and PWM are on the drum
-engine; the other pages are Drum 1's without pitch EG and FM. Clicking the encoder on `ins` shows
+engine; the other pages are Drum 1's without pitch EG and FM: the Mod page shows the velocity
+settings (`vdt` `vam` `vvo`) on its first screen, the FM page says "analog voice has no FM". Clicking the encoder on `ins` shows
 the instrument's full name.
 
 - **The amp decay sets how long the instrument rings**; use the amp envelope as a gate (slope 127),

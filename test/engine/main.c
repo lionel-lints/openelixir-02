@@ -494,6 +494,9 @@ static int loadVoiceTest(void)
 
 //every slot gets every engine: each track must sound, track 7 must use decay B,
 //track 6 must cut track 7, and the engine specific parameters must reach the engine
+#ifdef HAVE_ENGINE_ANALOG
+static int pageTest(void);
+#endif
 static int engineTest(void)
 {
 	static const char* const names[NUM_ENGINES] = { "drum", "snare", "cymbal", "hihat",
@@ -563,6 +566,9 @@ static int engineTest(void)
 	}
 	if(nan) printf("NaN in a voice\n");
 	fail |= nrpnFail;
+#ifdef HAVE_ENGINE_ANALOG
+	fail |= pageTest();
+#endif
 	printf(fail || nan ? "ENGINE TEST FAILED\n" : "engine test passed\n");
 	return fail || nan;
 }
@@ -959,6 +965,60 @@ static int analogTest(void)
 
 	printf("analog voice renders: hash %08x\n", anHash);
 	printf(fail ? "ANALOG TEST FAILED\n" : "analog test passed\n");
+	return fail;
+}
+#endif
+
+#ifdef HAVE_ENGINE_ANALOG
+#include "menu/menuPages.h"
+//the menu pages of the engines without stock slot, built as menu_updateVoicePages() does: each named
+//role exactly once, no hidden parameter, no first screen empty while the second has parameters;
+//the analog engine: ins and sat on the first page, velocity on the Mod page's first screen, FM empty
+static int pageTest(void)
+{
+	int fail = 0;
+	for(uint8_t engine = 0; engine < NUM_ENGINES; engine++)
+	{
+		const KitEngineInfo* info = &kitEngines_info[engine];
+		if(info->stockSlot != ENGINE_NO_STOCK_SLOT)
+			continue;
+		Page pages[NUM_SUB_PAGES];
+		int seen[NUM_SLOT_ROLES] = { 0 }, bad = 0;
+		for(uint8_t sub = 0; sub < NUM_SUB_PAGES; sub++)
+		{
+			pages[sub] = menuPages[VOICE1_PAGE + info->templateSlot][sub];
+			uint16_t* par = &pages[sub].bot1;
+			uint8_t* text = &pages[sub].top1;
+			kitEngines_templatePage(engine, par, text);
+			int first = 0, second = 0;
+			for(uint8_t i = 0; i < 8; i++)
+			{
+				if(par[i] == PAR_NONE) continue;
+				if(i < 4) first++; else second++;
+				for(uint8_t h = 0; h < info->numHidden; h++) bad |= par[i] == info->hidden[h];
+				for(uint8_t role = 0; role < NUM_SLOT_ROLES; role++)
+					if(par[i] == slot_rolePar[info->templateSlot][role])
+					{
+						seen[role]++;
+						bad |= text[i] != info->roleText[role];
+					}
+			}
+			bad |= first == 0 && second > 0;
+		}
+		for(uint8_t role = 0; role < NUM_SLOT_ROLES; role++)
+			bad |= seen[role] != (info->roleText[role] != TEXT_EMPTY);
+#ifdef HAVE_ENGINE_ANALOG
+		if(engine == ENGINE_ANALOG)
+		{
+			bad |= pages[0].bot1 != PAR_COARSE1 || pages[0].bot3 != slot_rolePar[0][0] || pages[0].bot4 != slot_rolePar[0][1];
+			bad |= pages[2].bot1 != PAR_VEL_DEST_1 || pages[2].bot2 != PAR_VELO_MOD_AMT_1 || pages[2].bot3 != PAR_VOLUME_MOD_ON_OFF1;
+			const uint16_t* fm = &pages[3].bot1;
+			for(uint8_t i = 0; i < 8; i++) bad |= fm[i] != PAR_NONE;
+		}
+#endif
+		printf("menu pages of %s: %s\n", info->name, bad ? "FAILED" : "ok");
+		fail |= bad;
+	}
 	return fail;
 }
 #endif

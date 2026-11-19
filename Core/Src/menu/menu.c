@@ -637,9 +637,9 @@ void menu_updateVoicePages()
 			*dst = menuPages[VOICE1_PAGE + stockSlot][sub];
 			uint16_t* par = &dst->bot1;
 			uint8_t* text = &dst->top1;
+			kitEngines_templatePage(engine, par, text);
 			for(uint8_t i=0;i<8;i++)
 			{
-				par[i] = kitEngines_templatePar(engine, par[i], &text[i]);
 				par[i] = menu_trackPar(par[i], stockSlot, page);
 				par[i] = kitEngines_mapParam(par[i], stockSlot, slot);
 				if(page == VOICE7_PAGE && par[i] == PAR_VELOD6_CLOSED)
@@ -1994,6 +1994,32 @@ void menu_repaintGeneric()
 
 	// the active page
 	const Page *ap=menu_getPage(menu_activePage,activePage);
+
+	//a page of a voice whose engine has none of its settings (e.g. FM on the analog engine)
+	if(menu_activePage <= VOICE7_PAGE && menu_voicePageBuilt[menu_activePage])
+	{
+		uint8_t empty = 1;
+		for(uint8_t i=0;i<8;i++)
+		{
+			empty &= pgm_read_word(&ap->bot1 + i) == PAR_NONE;
+		}
+		if(empty)
+		{
+			static const char* const subPageNames[NUM_SUB_PAGES] = { "osc", "amp EG", "mod", "FM", "transient", "filter", "LFO", "mix" };
+			const uint8_t slot = menu_activePage < NUM_VOICE_SLOTS ? menu_activePage : NUM_VOICE_SLOTS-1;
+			char line[2][17];
+			snprintf(line[0], 17, "%s voice", kitEngines_info[kitEngines[slot]].name);
+			snprintf(line[1], 17, "has no %s", subPageNames[activePage < NUM_SUB_PAGES ? activePage : 0]);
+			for(uint8_t row=0;row<2;row++)
+			{
+				const uint8_t len = (uint8_t)strlen(line[row]);
+				memset(editDisplayBuffer[row], ' ', 16);
+				memcpy(&editDisplayBuffer[row][(16 - len) / 2], line[row], len);
+				editDisplayBuffer[row][16] = 0;
+			}
+			return;
+		}
+	}
 
 	if(editModeActive) //show single parameter with full name
 	{
