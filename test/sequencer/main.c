@@ -317,10 +317,24 @@ static void run(const Scenario* sc)
 	}
 
 	long last_tick = -1;
+	//SEQ_POLL=1: like the device's main loop, seq_tick() also on every system tick between the
+	//blocks (the firmware calls it from soundengine_process(), several times per block)
+	const int poll = getenv("SEQ_POLL") != NULL;
+	uint32_t prevSystick = 0;
 	for(block = 0; block < blocks; block++)
 	{
 		const double t = block * BLOCK_S;
-		systick_ticks = (uint32_t)(t / SYSTICK_S);
+		const uint32_t blockSystick = (uint32_t)(t / SYSTICK_S);
+		if(poll)
+		{
+			for(uint32_t st = prevSystick + 1; st < blockSystick; st++)
+			{
+				systick_ticks = st;
+				seq_tick();
+			}
+		}
+		prevSystick = blockSystick;
+		systick_ticks = blockSystick;
 
 		//scenario events at their nominal (unswung) time, before the block that reaches it
 		if(sc->event)

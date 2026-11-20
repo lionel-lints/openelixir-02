@@ -1055,7 +1055,12 @@ SEQ_NOT_INLINED static uint8_t seq_isEarlyStep(const uint8_t track, const uint8_
 static void seq_emitClockPulse(const uint8_t cnt, const uint8_t midi)
 {
 	if(midi)
+	{
+#if CPU_METER
+		cpuMeter_midiClock(0);
+#endif
 		seq_sendRealtime(MIDI_CLOCK);
+	}
 	else
 		trigger_clockTick(0, cnt);
 }

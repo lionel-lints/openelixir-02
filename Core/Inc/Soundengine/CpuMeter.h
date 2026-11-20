@@ -87,6 +87,12 @@ typedef struct
 	uint32_t stallPeak;		/**< longest time without rendering */
 	uint32_t stallPc;		/**< interrupted code address during the longest stall */
 	uint8_t stallBlocked;	/**< TIM14 itself was held off during the longest stall */
+
+	//MIDI clock page: shortest / longest time between two MIDI clock ticks, [0] as the sequencer
+	//emits them, [1] as they leave over USB (gaps over 200 ms, stop and start, don't count)
+	uint32_t clkLast[2];
+	uint32_t clkMin[2];
+	uint32_t clkMax[2];
 } CpuMeter;
 
 extern CpuMeter cpuMeter;
@@ -124,6 +130,21 @@ static inline void cpuMeter_dmaCallback(uint8_t dac)
 		if(interval > cpuMeter.dmaMax) cpuMeter.dmaMax = interval;
 	}
 	cpuMeter.dmaLast[dac] = now;
+}
+/** a MIDI clock tick: 0 = emitted by the sequencer, 1 = handed to the USB endpoint */
+static inline void cpuMeter_midiClock(uint8_t where)
+{
+	const uint32_t now = DWT->CYCCNT;
+	if(cpuMeter.clkLast[where] != 0)
+	{
+		const uint32_t interval = now - cpuMeter.clkLast[where];
+		if(interval < SystemCoreClock / 5)
+		{
+			if(interval < cpuMeter.clkMin[where]) cpuMeter.clkMin[where] = interval;
+			if(interval > cpuMeter.clkMax[where]) cpuMeter.clkMax[where] = interval;
+		}
+	}
+	cpuMeter.clkLast[where] = now;
 }
 /** call when the next block is requested (bCurrentSampleValid set) */
 static inline void cpuMeter_blockRequested(void)

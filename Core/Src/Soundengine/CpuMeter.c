@@ -81,6 +81,12 @@ void cpuMeter_resetPeaks(void)
 	cpuMeter.stallPeak = 0;
 	cpuMeter.stallPc = 0;
 	cpuMeter.stallBlocked = 0;
+	for(uint8_t i=0;i<2;i++)
+	{
+		cpuMeter.clkLast[i] = 0;
+		cpuMeter.clkMin[i] = UINT32_MAX;
+		cpuMeter.clkMax[i] = 0;
+	}
 }
 
 void cpuMeter_irqSample(const uint32_t* frame)

@@ -1414,7 +1414,7 @@ void menu_repaintAll()
 void menu_toggleCpuMeter()
 {
 	//(doesn't reset the peaks, so values like the dropout count can be read on another page)
-	menu_cpuMeterShown = (menu_cpuMeterShown + 1) % 5;
+	menu_cpuMeterShown = (menu_cpuMeterShown + 1) % 6;
 	menu_repaintAll();
 }
 uint8_t menu_cpuMeterPage()
@@ -1428,6 +1428,20 @@ static void menu_repaintCpuMeter()
 {
 	//load in percent of one audio block, clamped so that each line fits 16 characters
 	const uint32_t block = cpuMeter_blockCycles();
+	if(menu_cpuMeterShown == 5)
+	{
+		//MIDI clock: shortest - longest interval [0.1 ms], emitted by the sequencer / sent to USB
+		const uint32_t tenth = SystemCoreClock / 10000;
+		unsigned v[2][2];
+		for(uint8_t i=0;i<2;i++)
+		{
+			v[i][0] = cpuMeter.clkMin[i] == UINT32_MAX ? 0 : CPU_METER_MIN(cpuMeter.clkMin[i] / tenth, 9999u);
+			v[i][1] = CPU_METER_MIN(cpuMeter.clkMax[i] / tenth, 9999u);
+		}
+		snprintf(&editDisplayBuffer[0][0], 17, "seq%3u.%u-%3u.%u  ", v[0][0] / 10, v[0][0] % 10, v[0][1] / 10, v[0][1] % 10);
+		snprintf(&editDisplayBuffer[1][0], 17, "usb%3u.%u-%3u.%u  ", v[1][0] / 10, v[1][0] % 10, v[1][1] / 10, v[1][1] % 10);
+		return;
+	}
 	if(menu_cpuMeterShown == 4)
 	{
 		//longest time without rendering, the code it interrupted, "blk" if TIM14 was held off

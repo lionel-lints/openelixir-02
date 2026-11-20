@@ -15,6 +15,7 @@
 #include "Soundengine/USB/usb_manager.h"
 #include <string.h>
 #include "usbd_cdc_if.h"
+#include "Soundengine/CpuMeter.h"
 
 
 
@@ -121,6 +122,14 @@ void usb_flushMidi()
 	uint8_t* const stop = usb_MidiInWrPtr > usb_MidiInRdPtr ? usb_MidiInWrPtr : end;
 	if(CDC_Transmit_FS(usb_MidiInRdPtr, (uint16_t)(stop - usb_MidiInRdPtr)) != USBD_OK)
 		return;	//busy or not connected: try again next time
+#if CPU_METER
+	//MIDI clock ticks handed to the endpoint now (4-byte USB-MIDI packets: the status is byte 1)
+	for(const uint8_t* p = usb_MidiInRdPtr + 1; p < stop; p += 4)
+	{
+		if(*p == 0xF8)
+			cpuMeter_midiClock(1);
+	}
+#endif
 
 	usb_MidiInRdPtr = stop >= end ? usb_MidiInBuff : stop;
 
