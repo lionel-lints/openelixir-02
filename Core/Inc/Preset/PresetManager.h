@@ -82,6 +82,8 @@ void preset_saveDrumsetRam(uint8_t presetNr, uint8_t isMorph);
 
 
 FRESULT preset_saveGlobals();
+//the settings into a saved project's folder (FR_NO_PATH: never saved)
+FRESULT preset_saveGlobalsToProject(uint8_t projectNr);
 uint8_t preset_loadGlobals();
 void preset_createGlobals();
 

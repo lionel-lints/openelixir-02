@@ -1106,6 +1106,24 @@ static uint8_t preset_readGlobalData()
 #endif
 }
 //----------------------------------------------------
+//the settings into the folder of a saved project: settings belong to a project (each project
+//folder has its glo.cfg, which loading the project reads), and the current folder is not always
+//the project's. FR_NO_PATH: the project was never saved (its settings are written with it).
+FRESULT preset_saveGlobalsToProject(uint8_t projectNr)
+{
+	char path[24];
+	FILINFO fno;
+	preset_projectFolderName(path, projectNr);
+	if(f_stat(path, &fno) != FR_OK)
+		return FR_NO_PATH;
+	strcat(path, "/glo.cfg");
+	const FRESULT res = preset_fopenWrite(path);
+	if(res != FR_OK)
+		return res;
+	preset_writeGlobalData();
+	return preset_fcloseWrite();
+}
+//----------------------------------------------------
 uint8_t preset_loadGlobals()
 {
 

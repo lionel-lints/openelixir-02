@@ -3966,9 +3966,10 @@ void menu_switchPage(uint8_t pageNr)
 		voiceLoad_leave();
 	menu_patternOverwriteTarget = NO_PATTERN;
 
-	//config settings are saved to the card (glo.cfg) when the config menu is left and one of them
-	//changed; before, only a project save wrote them (the stock autosave here was switched off).
-	//The audio keeps playing meanwhile.
+	//config settings are saved to the card when the config menu is left and one of them changed,
+	//into the current project's folder (settings belong to a project: its glo.cfg); before, only a
+	//project save wrote them (the stock autosave here was switched off). A project that was never
+	//saved has no folder yet: its settings are written when it is saved. The audio keeps playing.
 	{
 		static uint8_t configBefore[NUM_PARAMS - PAR_BEGINNING_OF_GLOBALS];
 		uint8_t* const globals = &activeParameters[PAR_BEGINNING_OF_GLOBALS];
@@ -3980,9 +3981,9 @@ void menu_switchPage(uint8_t pageNr)
 				&& memcmp(configBefore, globals, sizeof(configBefore)) != 0)
 		{
 			const uint8_t bg = soundengine_backgroundAudioBegin();
-			const FRESULT res = preset_saveGlobals();
+			const FRESULT res = preset_saveGlobalsToProject(menu_loadedPresetNr[CURRENT_PROJECT]);
 			soundengine_backgroundAudioEnd(bg);
-			if(res != FR_OK)
+			if(res != FR_OK && res != FR_NO_PATH)
 				menu_showSdError(res);
 		}
 	}
