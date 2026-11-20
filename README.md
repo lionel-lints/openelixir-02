@@ -69,8 +69,8 @@ the center is a low-pass (down to 40 Hz), right of it a high-pass (up to 8 kHz),
 is off; `res` sets the resonance. It isn't saved and starts off; while off, the sound is unchanged.
 
 **Uninterrupted playback.** Turning knobs, working in the menus, loading and saving kits and
-patterns (also from and to other projects on the SD card) and saving projects don't interrupt the
-audio or the sequencer while it plays.
+patterns (also from and to other projects on the SD card), switching a voice's engine and saving
+projects don't interrupt the audio or the sequencer while it plays.
 
 **New in 1.4:**
 - **Song page:** each row shows the slot (1-64) and the pattern's name, `>` at the cursor and `*` at
