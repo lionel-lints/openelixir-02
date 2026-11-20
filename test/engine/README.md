@@ -86,3 +86,12 @@ Linux only (uses `mmap` with fixed addresses). Needs gcc and Python 3.
 sweeps as WAV files (default `build/modal-test`): structure, damping, brightness, position, hardness,
 noise burst, sustained exciter, partials and a pitch run. It prints the struct size, the level of
 each hit before the soft limit and the number of modes computed.
+
+## Kit files
+
+`render --kitfile <file>...` loads kit files (.SND, from the SD card) into the engine like a kit load
+and triggers each track alone (velocity 127, step note, faders up, limiter on): one CSV line per track
+with peak and loudness (RMS of the first 250 ms) in dBFS, length to -60 dBFS and samples at full scale.
+`render --makekit <spec> <out.snd>` builds a kit with the firmware's own code (engine switches,
+Analog instrument setups, parameters) and writes it like a kit save; see `kits/oe-kits/`.
+

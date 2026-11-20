@@ -1110,6 +1110,140 @@ static int modalTest(void)
 }
 #endif
 
+#ifdef HAVE_KIT_ENGINES
+//--kitfile <file>...: a kit file (.SND: 8 name bytes, the sound parameters, maybe the engine block)
+//loaded into the engine like a kit load, then each track triggered alone (velocity 127, step note,
+//faders up, limiter as configured) and measured on the outputs: peak and loudness (RMS of the first
+//250 ms) in dBFS, length to -60 dBFS in ms, samples at full scale. One CSV line per track.
+static int kitFileTest(int argc, char** argv)
+{
+	static uint8_t kit[END_OF_SOUND_PARAMETERS];
+	printf("file,name,track,peak_db,rms_db,length_ms,fullscale\n");
+	for(int a = 0; a < argc; a++)
+	{
+		FILE* f = fopen(argv[a], "rb");
+		if(!f) { perror(argv[a]); return 2; }
+		uint8_t raw[8 + END_OF_SOUND_PARAMETERS + 64];
+		const size_t n = fread(raw, 1, sizeof(raw), f);
+		fclose(f);
+		if(n < 8 + END_OF_SOUND_PARAMETERS) { fprintf(stderr, "%s: too short\n", argv[a]); return 2; }
+		char name[9];
+		for(int i = 0; i < 8; i++) name[i] = (raw[i] >= 32 && raw[i] < 127 && raw[i] != ',') ? (char)raw[i] : ' ';
+		name[8] = 0;
+		memcpy(kit, raw + 8, END_OF_SOUND_PARAMETERS);
+		uint8_t engines[NUM_VOICE_SLOTS];
+		kitEngines_decodeKit(raw + 8 + END_OF_SOUND_PARAMETERS, (uint16_t)(n - 8 - END_OF_SOUND_PARAMETERS), engines, kit);
+		for(uint8_t s = 0; s < NUM_VOICE_SLOTS; s++)
+		{
+			kitEngines[s] = engines[s];
+			slot_setEngine(s, engines[s]);
+		}
+		for(uint16_t par = 0; par < END_OF_SOUND_PARAMETERS; par++)
+		{
+			if(!skipParam(par)) sendParam(par, kit[par]);
+		}
+		for(uint8_t v = 0; v < 6; v++)
+		{
+			sendTarget(FRONT_CC_LFO_TARGET, v, kit[PAR_TARGET_LFO1 + v]);
+			sendTarget(FRONT_CC_VELO_TARGET, v, kit[PAR_VEL_DEST_1 + v]);
+		}
+		for(uint8_t track = 0; track < 7; track++)
+		{
+			int peakDummy, nan = 0;
+			renderSound(1200, &peakDummy, &nan);	//the previous track and FX tails fade
+			voiceControl_noteOn(track, SEQ_DEFAULT_NOTE, 127);
+			int peak = 0, last = -1;
+			long fullscale = 0;
+			double energy = 0;
+			const int rmsBlocks = (int)(0.25 * 44140 / OUTPUT_DMA_SIZE);
+			for(int b = 0; b < 3000; b++)
+			{
+				mixer_calcNextSampleBlock(engOut, engOut2);
+				for(int i = 0; i < OUTPUT_DMA_SIZE * 2; i++)
+				{
+					const int x = abs(engOut[i]) > abs(engOut2[i]) ? abs(engOut[i]) : abs(engOut2[i]);
+					if(x > peak) peak = x;
+					if(x > 32) last = b;
+					if(x >= 32767) fullscale++;
+					if(b < rmsBlocks) energy += (double)x * x;
+				}
+			}
+			const double rms = sqrt(energy / (rmsBlocks * OUTPUT_DMA_SIZE * 2));
+			printf("%s,%s,%d,%.1f,%.1f,%.0f,%ld\n", argv[a], name, track + 1,
+					peak ? 20 * log10(peak / 32768.0) : -120.0, rms > 0 ? 20 * log10(rms / 32768.0) : -120.0,
+					(last + 1) * OUTPUT_DMA_SIZE * 1000.0 / 44140, fullscale);
+		}
+	}
+	return 0;
+}
+#endif
+
+#ifdef HAVE_ENGINE_ANALOG
+//--makekit <spec> <out.snd>: builds a kit with the firmware's own code from the init kit, as if
+//made on the device, and writes it like a kit save (name, sound parameters, engine block).
+//Spec lines: "name <up to 8 chars>", "engine <slot 0-5> <engine>" (kitEngines_assign: the engine's
+//defaults), "analog <slot> <instrument>" (as turning ins: its setup), "par <number> <value>".
+static int makeKit(const char* specPath, const char* outPath)
+{
+	FILE* spec = fopen(specPath, "r");
+	if(!spec) { perror(specPath); return 2; }
+	kitEngines_setStock(kitEngines);
+	kitEngines_apply();
+	loadKit(0);
+	//no LFO or velocity modulation (loadKit() gives them random targets)
+	for(uint8_t v = 0; v < 6; v++)
+	{
+		activeParameters[PAR_TARGET_LFO1 + v] = 0;
+		activeParameters[PAR_VEL_DEST_1 + v] = 0;
+		activeParameters[PAR_VOICE_LFO1 + v] = v + 1;
+		sendTarget(FRONT_CC_LFO_TARGET, v, 0);
+		sendTarget(FRONT_CC_VELO_TARGET, v, 0);
+	}
+	char name[9] = "Kit     ";
+	char line[160];
+	while(fgets(line, sizeof(line), spec))
+	{
+		int a, b;
+		char word[16], text[16];
+		if(sscanf(line, "name %8[^\n]", text) == 1)
+		{
+			memset(name, ' ', 8);
+			memcpy(name, text, strlen(text) < 8 ? strlen(text) : 8);
+		}
+		else if(sscanf(line, "engine %d %d", &a, &b) == 2)
+			kitEngines_assign((uint8_t)a, (uint8_t)b);
+		else if(sscanf(line, "analog %d %d", &a, &b) == 2)
+		{
+			const uint16_t par = slot_rolePar[a][0];
+			sendParam(par, (uint8_t)b);
+			analogSetup_onParamChanged(par, (uint8_t)b);
+		}
+		else if(sscanf(line, "par %d %d", &a, &b) == 2)
+			sendParam((uint16_t)a, (uint8_t)b);
+		else if(sscanf(line, "%15s", word) == 1 && word[0] != '#')
+		{
+			fprintf(stderr, "%s: can't read: %s", specPath, line);
+			return 2;
+		}
+	}
+	fclose(spec);
+	uint8_t params[END_OF_SOUND_PARAMETERS], block[KIT_BLOCK_SIZE];
+	memcpy(params, activeParameters, END_OF_SOUND_PARAMETERS);
+	const uint8_t blockSize = kitEngines_encodeKit(kitEngines, params, block);
+	kitEngines_stockLfoTargets(params);
+	FILE* out = fopen(outPath, "wb");
+	if(!out) { perror(outPath); return 2; }
+	fwrite(name, 1, 8, out);
+	fwrite(params, 1, END_OF_SOUND_PARAMETERS, out);
+	fwrite(block, 1, blockSize, out);
+	fclose(out);
+	printf("%s: %s, engines", outPath, name);
+	for(uint8_t s2 = 0; s2 < NUM_VOICE_SLOTS; s2++) printf(" %u", kitEngines[s2]);
+	printf("\n");
+	return 0;
+}
+#endif
+
 //------------------------------------------------------------ UI message checks
 //The UI's messages carry 7-bit values that the sequencer uses as array indices.
 //A request for the Euclid settings of a track must read the settings of tracks
@@ -1193,6 +1327,26 @@ int main(int argc, char** argv)
 		setJackSwitches(0xf);
 		soundengine_init();
 		return analogTest();
+	}
+#endif
+#ifdef HAVE_ENGINE_ANALOG
+	if(argc == 4 && strcmp(argv[1], "--makekit") == 0)
+	{
+		mapPeripherals();
+		for(int i = 0; i < 6; i++) faders[i] = 1.f;
+		setJackSwitches(0xf);
+		soundengine_init();
+		return makeKit(argv[2], argv[3]);
+	}
+#endif
+#ifdef HAVE_KIT_ENGINES
+	if(argc >= 3 && strcmp(argv[1], "--kitfile") == 0)
+	{
+		mapPeripherals();
+		for(int i = 0; i < 6; i++) faders[i] = 1.f;
+		setJackSwitches(0xf);
+		soundengine_init();
+		return kitFileTest(argc - 2, argv + 2);
 	}
 #endif
 	if(argc == 2 && strcmp(argv[1], "--parser") == 0)
