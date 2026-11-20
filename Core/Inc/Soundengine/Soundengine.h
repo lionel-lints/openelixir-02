@@ -33,6 +33,11 @@
 void soundengine_init();
 void soundengine_process();
 uint8_t soundengine_calcNextSampleBlock();
+/** For long work in the main loop (e.g. a scan of all patterns): runs the sequencer and renders
+ * the next audio block if one is due, as soundengine_process() does, and nothing else (no MIDI,
+ * no morphing), so it may also be called from work that a received MIDI message started.
+ * Doesn't nest. */
+void soundengine_renderDue();
 /** Around work that blocks the main loop (SD card access): the audio interrupt renders
  * the blocks meanwhile. Returns whether it was started here; pass that to ..._end(). */
 uint8_t soundengine_backgroundAudioBegin();

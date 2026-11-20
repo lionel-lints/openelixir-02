@@ -79,7 +79,8 @@ void soundengine_init()
 	FPU->FPDSCR |= FPU_FPDSCR_FZ_Msk ; //enable flush to zero
 }
 
-void soundengine_process()
+//the sequencer and the next audio block, if due (soundengine_process(), soundengine_renderDue())
+static void soundengine_tickAndRender()
 {
 #if CALC_SAMPLES_IN_INTERRUPT
 	__HAL_TIM_DISABLE_IT(&htim2, TIM_IT_UPDATE);
@@ -106,6 +107,21 @@ void soundengine_process()
 
 #endif
 #endif
+}
+//------------------------------------------------------------------
+void soundengine_renderDue()
+{
+	static uint8_t busy = 0;
+	if(busy)
+		return;
+	busy = 1;
+	soundengine_tickAndRender();
+	busy = 0;
+}
+//------------------------------------------------------------------
+void soundengine_process()
+{
+	soundengine_tickAndRender();
 		//process midi on midi port
 		uart_processMidi();
 

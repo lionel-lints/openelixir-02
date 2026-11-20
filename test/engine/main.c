@@ -385,6 +385,36 @@ static int roleTest(int round)
 #endif
 
 #ifdef HAVE_KIT_ENGINES
+//switching an engine clears step locks of the slot's engine specific parameters (they would change
+//another setting now) in every pattern, and only those; the scan of all steps renders the audio
+//block that comes due after each pattern (it used to hold up the audio for about 8 ms)
+extern unsigned stub_seqTicks;
+static int stepLockTest(void)
+{
+	const uint8_t slot = 1;
+	kitEngines_setStock(kitEngines);
+	kitEngines_apply();
+	memset(&seq_patternSet.seq_subStepPattern, 0, sizeof(seq_patternSet.seq_subStepPattern));
+	#define STORED(par) ((uint8_t)((par) < 128 ? (par) + 1 : (par)))	//as seq_automationTarget() reads it
+	Step* roleFirst = &seq_patternSet.seq_subStepPattern[0][0][0];
+	Step* roleLast = &seq_patternSet.seq_subStepPattern[NUM_PATTERN - 1][NUM_TRACKS - 1][NUM_STEPS - 1];
+	Step* common = &seq_patternSet.seq_subStepPattern[5][2][7];
+	Step* otherSlot = &seq_patternSet.seq_subStepPattern[9][1][3];
+	roleFirst->param1Nr = STORED(slot_rolePar[slot][0]); roleFirst->param1Val = 50;
+	roleLast->param2Nr = STORED(slot_rolePar[slot][6]); roleLast->param2Val = 60;
+	common->param1Nr = STORED(PAR_COARSE2); common->param1Val = 70;
+	otherSlot->param2Nr = STORED(slot_rolePar[slot + 1][0]); otherSlot->param2Val = 80;
+	#undef STORED
+	const unsigned ticks = stub_seqTicks;
+	kitEngines_assign(slot, ENGINE_MODAL);
+	const unsigned yields = stub_seqTicks - ticks;
+	const int bad = roleFirst->param1Nr != NO_AUTOMATION || roleFirst->param1Val != 0
+			|| roleLast->param2Nr != NO_AUTOMATION || roleLast->param2Val != 0
+			|| common->param1Val != 70 || otherSlot->param2Val != 80 || yields < NUM_PATTERN;
+	printf("engine switch clears its slot's role step locks (%u render yields): %s\n", yields, bad ? "FAILED" : "ok");
+	return bad;
+}
+
 //the engine block in kit files: round trip, and stock engines for anything else
 static int blockTest(void)
 {
@@ -568,6 +598,9 @@ static int engineTest(void)
 	fail |= nrpnFail;
 #ifdef HAVE_ENGINE_ANALOG
 	fail |= pageTest();
+#endif
+#ifdef HAVE_KIT_ENGINES
+	fail |= stepLockTest();
 #endif
 	printf(fail || nan ? "ENGINE TEST FAILED\n" : "engine test passed\n");
 	return fail || nan;

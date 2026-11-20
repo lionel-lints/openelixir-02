@@ -77,7 +77,8 @@ void seq_setRunning(uint8_t isRunning) { }
 void seq_setShuffle(float shuffle) { }
 void seq_setTrackLength(uint8_t trackNr, uint8_t length) { }
 void seq_sync(void) { }
-void seq_tick(void) { }
+unsigned stub_seqTicks;	//(counts the sound engine's sequencer ticks, e.g. the render yields of a long UI scan)
+void seq_tick(void) { stub_seqTicks++; }
 void sync_midiResetPosition(void) { }
 void sync_midiStartStop(uint8_t isStart) { }
 void uart_clearFrontFifo(void) { }
@@ -92,7 +93,7 @@ volatile  uint8_t bCurrentSampleValid;
 int16_t dma_buffer[OUTPUT_DMA_SIZE*4];
 int16_t dma_buffer2[OUTPUT_DMA_SIZE*4];
 RNG_HandleTypeDef hrng;
-TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim2 = { .Instance = TIM2 };	//the timer registers are mapped memory (mapPeripherals)
 uint8_t menu_activePage;
 PatternSet seq_patternSet;
 uint8_t seq_resetBarOnPatternChange;

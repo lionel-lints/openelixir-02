@@ -18,6 +18,7 @@
 #include "frontPanelParser_ui.h"
 #include "Preset/PresetManager.h"
 #include "Soundengine/Sequencer/sequencer.h"
+#include "Soundengine/Soundengine.h"
 #include <string.h>
 
 uint8_t kitEngines[NUM_VOICE_SLOTS] = { ENGINE_DRUM, ENGINE_DRUM, ENGINE_DRUM, ENGINE_SNARE, ENGINE_CYMBAL, ENGINE_HIHAT };
@@ -412,6 +413,17 @@ static void kitEngines_turnOffRoleModulation(const uint8_t slot)
 		}
 	}
 
+	//the step automation of every step of every pattern (64 x 7 x 64 steps, several ms): the
+	//slot's role parameters as a set (one lookup per step), and the audio block that comes due
+	//rendered after each pattern (else the audio drops out while the engine changes)
+	uint8_t isRole[256/8];
+	memset(isRole, 0, sizeof(isRole));
+	for(uint8_t role=0;role<NUM_SLOT_ROLES;role++)
+	{
+		const uint8_t par = slot_rolePar[slot][role];
+		isRole[par>>3] |= (uint8_t)(1<<(par&7));
+	}
+#define KIT_ENGINES_IS_ROLE(t)	((t) < 256 && (isRole[(t)>>3] & (1<<((t)&7))))
 	for(uint8_t pattern=0;pattern<NUM_PATTERN;pattern++)
 	{
 		for(uint8_t track=0;track<NUM_TRACKS;track++)
@@ -419,19 +431,23 @@ static void kitEngines_turnOffRoleModulation(const uint8_t slot)
 			for(uint8_t step=0;step<NUM_STEPS;step++)
 			{
 				Step* st = &seq_patternSet.seq_subStepPattern[pattern][track][step];
-				if(kitEngines_isRolePar(slot, seq_automationTarget(st->param1Nr)))
+				const uint16_t t1 = seq_automationTarget(st->param1Nr);
+				if(KIT_ENGINES_IS_ROLE(t1))
 				{
 					st->param1Nr = NO_AUTOMATION;
 					st->param1Val = 0;
 				}
-				if(kitEngines_isRolePar(slot, seq_automationTarget(st->param2Nr)))
+				const uint16_t t2 = seq_automationTarget(st->param2Nr);
+				if(KIT_ENGINES_IS_ROLE(t2))
 				{
 					st->param2Nr = NO_AUTOMATION;
 					st->param2Val = 0;
 				}
 			}
 		}
+		soundengine_renderDue();
 	}
+#undef KIT_ENGINES_IS_ROLE
 }
 //---------------------------------------------------
 //the slot's parameters in activeParameters are set: send them to the sound engine
