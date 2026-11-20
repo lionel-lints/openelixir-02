@@ -2444,6 +2444,10 @@ FRESULT preset_createProject(uint8_t presetNr)
 
 	preset_clearTmpFolder();
 
+	//the default settings go to the sound engine and sequencer too, like a loaded project's: before,
+	//a new project showed 120 bpm (and the other defaults) but played on with the previous ones
+	menu_sendAllGlobals();
+
 	return FR_OK;
 }
 //----------------------------------------------------
