@@ -459,6 +459,9 @@ static void kitEngines_sendSlot(const uint8_t slot, const uint8_t* list)
 	for(uint8_t i=0;i<NUM_SLOT_PARAMS;i++)
 	{
 		kitEngines_sendPar(list[i]);
+		//all at once they can make an audio block late at a high load: render it in between
+		if(i % 8 == 7)
+			soundengine_renderDue();
 	}
 	if(slot == NUM_VOICE_SLOTS-1)
 	{
@@ -504,14 +507,15 @@ void kitEngines_assign(const uint8_t slot, const uint8_t engine)
 	kitEngines_setTarget(PAR_TARGET_LFO1+slot, CC_LFO_TARGET, slot, 0);
 	kitEngines_setTarget(PAR_VEL_DEST_1+slot, CC_VELO_TARGET, slot, 0);
 
-	kitEngines_turnOffRoleModulation(slot);
-
 	//the Analog engine starts with its first instrument, set up to play like the original
 	if(engine == ENGINE_ANALOG)
 		analogSetup_set(slot, activeParameters[slot_rolePar[slot][0]], activeParameters, NULL);
 
 	//the voice was re-initialized: send all its parameters
 	kitEngines_sendSlot(slot, list);
+
+	//then the step locks (the scan lets the audio play meanwhile: the voice has its settings by now)
+	kitEngines_turnOffRoleModulation(slot);
 }
 //---------------------------------------------------
 void kitEngines_loadVoice(const uint8_t slot, const uint8_t engine, const uint8_t* kit)
@@ -545,12 +549,13 @@ void kitEngines_loadVoice(const uint8_t slot, const uint8_t engine, const uint8_
 	activeParameters[PAR_VOICE_LFO1+slot] = lfoOnPerf ? LFO_VOICE_PERF : slot+1;
 	kitEngines_setTarget(PAR_TARGET_LFO1+slot, CC_LFO_TARGET, slot, (lfoOnItself || lfoOnPerf) ? kit[PAR_TARGET_LFO1+slot] : 0);
 
+	kitEngines_sendSlot(slot, list);
+
+	//then the step locks (the scan lets the audio play meanwhile: the voice has its settings by now)
 	if(engineChanged)
 	{
 		kitEngines_turnOffRoleModulation(slot);
 	}
-
-	kitEngines_sendSlot(slot, list);
 }
 //---------------------------------------------------
 void kitEngines_apply(void)

@@ -387,7 +387,8 @@ static int roleTest(int round)
 #ifdef HAVE_KIT_ENGINES
 //switching an engine clears step locks of the slot's engine specific parameters (they would change
 //another setting now) in every pattern, and only those; the scan of all steps renders the audio
-//block that comes due after each pattern (it used to hold up the audio for about 8 ms)
+//block that comes due after each pattern (it used to hold up the audio for about 8 ms), sending the
+//slot's parameters after every 8
 extern unsigned stub_seqTicks;
 static int stepLockTest(void)
 {
@@ -410,7 +411,7 @@ static int stepLockTest(void)
 	const unsigned yields = stub_seqTicks - ticks;
 	const int bad = roleFirst->param1Nr != NO_AUTOMATION || roleFirst->param1Val != 0
 			|| roleLast->param2Nr != NO_AUTOMATION || roleLast->param2Val != 0
-			|| common->param1Val != 70 || otherSlot->param2Val != 80 || yields < NUM_PATTERN;
+			|| common->param1Val != 70 || otherSlot->param2Val != 80 || yields < NUM_PATTERN + 4;	//+ the parameters, 8 at a time
 	printf("engine switch clears its slot's role step locks (%u render yields): %s\n", yields, bad ? "FAILED" : "ok");
 	return bad;
 }
