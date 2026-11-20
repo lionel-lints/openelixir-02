@@ -3952,16 +3952,26 @@ void menu_switchPage(uint8_t pageNr)
 		voiceLoad_leave();
 	menu_patternOverwriteTarget = NO_PATTERN;
 
-	//autosave config page settings
-	/*
-	if(menu_activePage == MENU_MIDI_PAGE)
+	//config settings are saved to the card (glo.cfg) when the config menu is left and one of them
+	//changed; before, only a project save wrote them (the stock autosave here was switched off).
+	//The audio keeps playing meanwhile.
 	{
-		if(pageNr != MENU_MIDI_PAGE)
+		static uint8_t configBefore[NUM_PARAMS - PAR_BEGINNING_OF_GLOBALS];
+		uint8_t* const globals = &activeParameters[PAR_BEGINNING_OF_GLOBALS];
+		if(menu_activePage != MENU_MIDI_PAGE && pageNr == MENU_MIDI_PAGE)
 		{
-			preset_saveGlobals();
+			memcpy(configBefore, globals, sizeof(configBefore));
+		}
+		else if(menu_activePage == MENU_MIDI_PAGE && pageNr != MENU_MIDI_PAGE
+				&& memcmp(configBefore, globals, sizeof(configBefore)) != 0)
+		{
+			const uint8_t bg = soundengine_backgroundAudioBegin();
+			const FRESULT res = preset_saveGlobals();
+			soundengine_backgroundAudioEnd(bg);
+			if(res != FR_OK)
+				menu_showSdError(res);
 		}
 	}
-	*/
 
 	//clear all sequencer buttons
 	led_clearSequencerLeds();
