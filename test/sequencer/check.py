@@ -199,8 +199,8 @@ def roll_hits(tl, out):
     """rolls on track 1: held from the press to the release (events before seq_tick in their
     block). On the global grid: a hit where the tick count since the start is a multiple of the
     interval; 16 and slower swing with their step, faster ones stay straight. Pressed mid-step,
-    the rest of that step from the next tick that hasn't passed; released, pending hits are
-    removed. "One": one hit at the press."""
+    the rest of that step that hasn't sounded yet (a swung hit by its swung time); released,
+    pending hits are removed. "One": one hit at the press."""
     rate = tl.roll["rate"]
     tick_s = 60.0 / tl.bpm / 4.0 / 24.0
     on = tl.block_reaching((tl.roll["on"][0] * 24 + tl.roll["on"][1]) * tick_s)
@@ -220,15 +220,15 @@ def roll_hits(tl, out):
             continue
         if current and sid == current[0]:
             elapsed = tl.systick(on) - grid
-            k0 = max(0, math.ceil(elapsed / tick - 1e-9))
         elif tl.block_due(grid) >= on:
-            k0 = 0
+            elapsed = 0.0
         else:
             continue
         swung = (n + 1) % 2 == 0
         delay = tl.swing / 127.0 * 16.0 * tick if (swing_on and swung) else 0.0
-        for k in range(k0, 24):
-            if (n * 24 + k) % interval == 0:
+        for k in range(0, 24):
+            # pressed mid-step: the hits that haven't sounded yet, a swung one by its swung time
+            if (n * 24 + k) % interval == 0 and k * tick + delay >= elapsed - 1e-9:
                 out.append((grid + k * tick + delay, sid, True, True, off))
 
 

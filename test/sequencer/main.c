@@ -110,10 +110,11 @@ static void eventPatternChange(int step, int tick)
 
 //rolls on track 1 from step 2 to step 21
 static int rollRate;
+static int rollOn[2] = { 2, 10 }, rollOff[2] = { 21, 10 };
 static void eventRoll(int step, int tick)
 {
-	if(step == 2 && tick == 10) { seq_setRollRate(rollRate); seq_setRoll(1, 1); }
-	if(step == 21 && tick == 10) seq_setRoll(1, 0);
+	if(step == rollOn[0] && tick == rollOn[1]) { seq_setRollRate(rollRate); seq_setRoll(1, 1); }
+	if(step == rollOff[0] && tick == rollOff[1]) seq_setRoll(1, 0);
 }
 
 //live recording on track 2, played like a person. Hits arrive like MIDI notes, after seq_tick()
@@ -249,6 +250,9 @@ static Scenario scenarios[] =
 	S("swing064_150_clk",      150,  64, CLOCK_INTERNAL, 32, patternTiming,    NULL),
 	S("swing127_150_clk",      150, 127, CLOCK_INTERNAL, 32, patternTiming,    NULL),
 	S("roll06_16_swing064_clk",120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll06_16_swing127_tap",120, 127, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
+	S("roll06_16_swing127_tap_060", 60, 127, CLOCK_INTERNAL, 32, patternBasic, eventRoll),
+	S("roll06_16_swing064_tap",120,  64, CLOCK_INTERNAL, 32, patternBasic,     eventRoll),
 	S("midiclock_swing064_clk",120,  64, CLOCK_MIDI,     32, patternTiming,    NULL),
 	S("analogclock_swing064_clk",120,64, CLOCK_ANALOG,   32, patternTiming,    NULL),
 };
@@ -274,7 +278,7 @@ static void writeHeader(const Scenario* sc)
 							seq_patternSet.seq_stepTiming[p][t][st].shift - 7);
 		}
 	if(sc->event == eventPatternChange) fprintf(out, "# patternchange queued 6 pattern 1 shuffle %u\n", seq_patternSet.shuffle[1]);
-	if(sc->event == eventRoll) fprintf(out, "# roll track 1 rate %d on 2 10 off 21 10\n", rollRate);
+	if(sc->event == eventRoll) fprintf(out, "# roll track 1 rate %d on %d %d off %d %d\n", rollRate, rollOn[0], rollOn[1], rollOff[0], rollOff[1]);
 	if(sc->event == eventRecord) fprintf(out, "# record\n");
 	if(sc->event == eventStopStart) fprintf(out, "# stopstart\n");
 }
@@ -291,6 +295,9 @@ static void run(const Scenario* sc)
 	if(sc->pattern) sc->pattern();
 	if(strstr(sc->name, "_clk") && seq_setClockSwing) seq_setClockSwing(1);
 	if(sc->event == eventRoll) rollRate = atoi(sc->name + 4);	//roll<menu index>_...
+	//_tap: a short press during a swung step (the 2nd 16th: step 3), after its straight start and
+	//before its swung hit, released after it: like playing that 16th live (it used to be lost)
+	if(sc->event == eventRoll && strstr(sc->name, "_tap")) { rollOn[0] = 3; rollOn[1] = 4; rollOff[0] = 3; rollOff[1] = 23; }
 	writeHeader(sc);
 	if(sc->event == eventRecord) planHits(sc->name, step_s, sc->swing);
 	int nextHit = 0;

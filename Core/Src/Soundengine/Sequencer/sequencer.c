@@ -1244,11 +1244,13 @@ static void seq_fireRoll(const uint8_t voice, const SeqHit* hit)
 	seq_addNote(voice, hit->vol, hit->note);
 }
 //------------------------------------------------------------------------------
-//queue a held roll's hits of the current step from tick k0 on. Rolls are on the global grid: a
-//hit where the tick count since the start is a multiple of the interval (the count wraps after
-//256 steps = 6144 ticks, which every interval divides). Rolls whose hits are all on 16ths
-//(16 and slower) swing with their step; the faster ones stay straight.
-SEQ_NOT_INLINED static void seq_queueRollHits(const uint8_t voice, const uint8_t k0)
+//queue a held roll's hits of the current step that are at or after "from" (time since the step's
+//grid in system ticks; 0 at the step start). Rolls are on the global grid: a hit where the tick
+//count since the start is a multiple of the interval (the count wraps after 256 steps = 6144
+//ticks, which every interval divides). Rolls whose hits are all on 16ths (16 and slower) swing
+//with their step; the faster ones stay straight. A swung hit counts by its swung time: pressed
+//during a swung step before its swung hit, that hit still comes.
+SEQ_NOT_INLINED static void seq_queueRollHits(const uint8_t voice, const float from)
 {
 	if(seq_rollInterval == 0)
 		return;
@@ -1258,9 +1260,12 @@ SEQ_NOT_INLINED static void seq_queueRollHits(const uint8_t voice, const uint8_t
 	const int8_t stepIdx = seq_stepIndex[voice];
 	const uint8_t note = stepIdx >= 0 ? seq_patternSet.seq_subStepPattern[seq_activePattern][voice][stepIdx].note : SEQ_DEFAULT_NOTE;
 	const uint32_t now = seq_now();
-	for(uint8_t k=k0;k<24;k++)
+	for(uint8_t k=0;k<24;k++)
 	{
 		if((base + k) % seq_rollInterval != 0)
+			continue;
+		//(the tick at "from" itself still counts, as the next tick that hasn't passed)
+		if(k*tick + swing < from - 1e-3f*tick)
 			continue;
 		const SeqHit hit = { seq_stepGrid + (uint32_t)seq_toTime(k*tick + swing), seq_masterStepCnt,
 				SEQ_HIT_FIRST|SEQ_HIT_ROLL, ROLL_VOLUME, note };
@@ -1515,7 +1520,7 @@ IN_ITCM_RAM void seq_nextStep()
 	for(uint8_t v=0;v<NUM_TRACKS;v++)
 	{
 		if(seq_rollState & (1<<v))
-			seq_queueRollHits(v, 0);
+			seq_queueRollHits(v, 0.f);
 	}
 	//following an external clock the step arrives in the middle of a block: its hits sound now
 	if(seq_getExtSync())
@@ -2103,11 +2108,10 @@ void seq_setRoll(uint8_t voice, uint8_t onOff)
 		}
 		else if(seq_queuePrimed)
 		{
-			//the rest of the current step at once (from the next tick that hasn't passed)
+			//the rest of the current step at once: the hits that haven't sounded yet (a swung
+			//hit by its swung time)
 			const float elapsed = (float)(int32_t)(seq_now() - seq_stepGrid) / SEQ_TIME_SCALE;
-			const int16_t k0 = (int16_t)ceilf(elapsed / seq_tickLength());
-			if(k0 < 24)
-				seq_queueRollHits(voice, (uint8_t)(k0 < 0 ? 0 : k0));
+			seq_queueRollHits(voice, elapsed < 0.f ? 0.f : elapsed);
 		}
 	} else {
 		seq_rollState &= ~(1<<voice);
